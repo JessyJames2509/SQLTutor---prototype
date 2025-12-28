@@ -100,6 +100,7 @@ function App() {
   const [hoveredTable, setHoveredTable] = useState<string | null>(null);
   const [executionSteps, setExecutionSteps] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState<number>(-1);
+  const [activeTables, setActiveTables] = useState<Set<string>>(new Set());
 
   /* =======================
      Exercises
@@ -241,8 +242,19 @@ useEffect(() => {
 
       for (let i = 0; i < steps.length; i++) {
         setCurrentStep(i);
+
+        const step = steps[i];
+        const nextActive = new Set<string>();
+
+        if (typeof step === "string") {
+          schema.forEach((t: any) => {
+            if (step.includes(t.table)) nextActive.add(t.table);
+          });
+        }
+
+        setActiveTables(nextActive);
         await new Promise((r) => setTimeout(r, 400));
-      }
+      }       
 
       const res = db.exec(query);
       setQueryParts(parts);
@@ -344,9 +356,18 @@ return (
               borderRadius: 8,
               padding: 12,
               minWidth: 220,
-              backgroundColor: "#fafafa",
-              transition: "border-color 0.2s",
-              ...(hoveredTable === t.table ? { borderColor: "#ff9800" } : {}),
+              transition: "border-color 0.2s, background-color 0.2s",
+
+              backgroundColor: activeTables.has(t.table)
+                ? "#fff3cd"
+                : "#fafafa",
+
+              borderColor:
+                hoveredTable === t.table
+                  ? "#ff9800"
+                  : activeTables.has(t.table)
+                  ? "#ffb300"
+                  : "#333",
             }}
           >
             <h3 style={{ marginTop: 0 }}>{t.table}</h3>
@@ -398,6 +419,10 @@ return (
             const y2 =
               targetRect.top + targetRect.height / 2 - parentRect.top;
 
+            const isActive =
+              activeTables.has(t.table) &&
+              activeTables.has(targetTable.table);
+
             return (
               <line
                 key={`${t.table}-${fkCol}`}
@@ -406,12 +431,14 @@ return (
                 x2={x2}
                 y2={y2}
                 stroke={
-                  hoveredTable === t.table ||
-                  hoveredTable === targetTable.table
+                  isActive
                     ? "red"
-                    : "orange"
+                    : hoveredTable === t.table ||
+                      hoveredTable === targetTable.table
+                    ? "orange"
+                    : "#ccc"
                 }
-                strokeWidth={2}
+                strokeWidth={isActive ? 3 : 2}
               />
             );
           })
