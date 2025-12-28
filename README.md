@@ -130,7 +130,7 @@ Constructive feedback is welcome, especially regarding:
 - SQL correctness and edge cases  
 - Suggestions for additional exercises, visualisations, or debugging support  
 
-Submit feedback via [GitHub Issues](https://github.com/JessyJames2509/sqltutor-thesis/issues).
+Submit feedback via [GitHub Issues](https://github.com/JessyJames2509/SQLTutor---thesis/issues).
 
 ## 10. Screenshots / Visual Aids
 
