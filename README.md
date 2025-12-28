@@ -118,9 +118,21 @@ The tool aligns with:
 ### Installation
 
 ```bash
+git clone https://github.com/JessyJames2509/SQLTutor---thesis.git
+cd SQLTutor---thesis/sql-playground
 npm install
 npm run dev
 ```
+
+### Accessing the App
+
+Open your browser and navigate to the URL shown in the terminal (default: <http://localhost:5173>).
+
+### Stopping the Server
+
+Press `Ctrl + C` in the terminal to stop the development server.
+
+
 ## 9. Feedback and Contributions
 
 Constructive feedback is welcome, especially regarding:
