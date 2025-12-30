@@ -98,36 +98,28 @@ bash
 Copy code
 npm run build
 npm run deploy
+Feedback and Contributions
+SQL correctness and edge cases
 
----
-## Feedback and Contributions
+Suggestions for additional exercises, visualizations, or debugging support
 
-- SQL correctness and edge cases  
-- Suggestions for additional exercises, visualizations, or debugging support  
+Submit feedback via GitHub Issues.
 
-Submit feedback via [GitHub Issues](https://github.com/JessyJames2509/SQLTutor---thesis/issues).
-
----
-
-## Screenshots
-
-![Schema Visualization](docs/schema.png)  
-![Execution Animation](docs/execution.gif)  
-![Hints Example](docs/hints.png)  
+Screenshots
 
 
----
 
-## License
 
-MIT License — see the [LICENSE](LICENSE) file for details.
+License
+MIT License — see the LICENSE file for details.
 
----
+Academic References
+Del-Pozo-Arcos, B., & Balderas, L. (2024). SQL Learning Challenges.
 
-## Academic References
+Miedema, A. (2024). Novice SQL Misconceptions.
 
-- Del-Pozo-Arcos, B., & Balderas, L. (2024). SQL Learning Challenges.  
-- Miedema, A. (2024). Novice SQL Misconceptions.  
-- Leventidis, V. et al. (2020). QueryVis: Visualization Tools for SQL.  
-- Sweller, J. et al. (2019). Cognitive Load Theory in Learning.  
-- Hattie, J., & Timperley, H. (2007). The Power of Feedback.  
+Leventidis, V. et al. (2020). QueryVis: Visualization Tools for SQL.
+
+Sweller, J. et al. (2019). Cognitive Load Theory in Learning.
+
+Hattie, J., & Timperley, H. (2007). The Power of Feedback.
