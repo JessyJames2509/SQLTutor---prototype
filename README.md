@@ -1,163 +1,157 @@
-# Design and Evaluation of an Interactive SQL Learning Tool with Real-Time Visualisation and Debugging Feedback 🎓
+SQLTutor 🎓
 
-A Thesis Submitted in Partial Fulfillment of the Requirements for the Degree of  
-**Bachelor of Science in Computing and Systems Development**  
-Department of Computing and Digital, University Centre Rotherham, Rotherham, UK
+Interactive SQL learning tool with real-time syntax validation, semantic hints, execution visualization, and a feedback survey.
 
----
+Bachelor of Science Thesis Project
+Department of Computing and Digital, University Centre Rotherham, UK
 
-## 1. Project Overview
+Live Demo
 
-SQLTutor is an interactive web-based SQL learning environment designed to address common challenges in learning SQL, including syntax, logic, and semantic errors. Traditional approaches rely on static examples or gamified platforms that focus on rewards rather than understanding. SQLTutor provides real-time debugging feedback and visualisation of queries to support students in developing accurate mental models and deeper comprehension of SQL.
+Try SQLTutor online: GitHub Pages Link
 
-By visualising query execution and relationships between tables, the tool reduces cognitive load, supports error-based learning, and aligns with Constructivist and Cognitive Load theories.
+Table of Contents
 
----
+Project Overview
 
-## 2. Background and Motivation
+Features
 
-- Learners struggle with SQL syntax, logical, and semantic errors (Miedema, 2023; Del-Pozo-Arcos & Balderas, 2024).  
-- Existing gamified platforms often provide limited or post-execution feedback.  
-- Visualisation has been shown to improve comprehension and reduce errors (Leventidis et al., 2020; Jeyaraj, Kumar, & Srinivasan, 2022).  
-- Real-time debugging hints and execution visualisation enhance understanding and support formative learning.
+Technology Stack
 
-**Problem:** Current platforms often fail to combine immediate feedback, visualisation, and accessibility, leaving students with persistent misconceptions.
+Quickstart / Usage
 
----
+Installation & Deployment
 
-## 3. Aim and Objectives
+Feedback and Contributions
 
-**Aim:**  
-To design and evaluate an interactive SQL tool with real-time debugging feedback and visualisation of query outputs, and determine its effectiveness in improving student understanding compared to traditional static and gamified methods.
+Screenshots
 
-**Objectives:**
+License
 
-1. Develop a live query execution and visualisation SQL tool.  
-2. Incorporate a real-time semantic feedback mechanism for debugging.  
-3. Conduct a small user study to evaluate comprehension improvements.
+Academic References
 
-**Research Question:**  
-Can an interactive SQL tool with real-time debugging and visualisation improve student learning outcomes compared to traditional and gamified approaches?
+Project Overview
 
-**Scope:**  
-Focuses on students at University Centre Rotherham with basic SQL knowledge. Includes prototype development and small-scale evaluation.
+SQLTutor is an interactive web-based SQL learning environment designed to address common challenges in learning SQL:
 
-**Limitations:**  
-- Limited participants  
-- Short-term evaluation  
-- Limited SQL experience
+Syntax, logic, and semantic errors
 
----
+Lack of immediate feedback in traditional tools
 
-## 4. Educational Design Principles
+Difficulties visualizing query execution
 
-SQLTutor is grounded in evidence-based educational theories:
+By providing real-time debugging hints and step-by-step query visualization, SQLTutor supports error-based learning, reduces cognitive load, and aligns with Constructivist and Cognitive Load theories.
 
-- **Immediate Feedback:** Syntax and semantic errors highlighted while typing and executing queries.  
-- **Formative Assessment:** Progressive exercises with hints and feedback.  
-- **Error-Based Learning:** Students learn by correcting mistakes.  
-- **Cognitive Scaffolding:** Visualisations reduce cognitive load and gradually guide learners.  
-- **Visual Learning Aids:** Step-by-step execution and schema diagrams externalise query logic.
+Features
 
-The tool aligns with:
+Live SQL syntax validation
 
-- **Cognitive Load Theory (Sweller et al., 2019)** – reduces memory overload  
-- **Constructivist Theory (McLeod, 2025)** – learning through experience and mental models  
-- **Formative Feedback Theory (Hattie & Timperley, 2007)** – feedback enhances learning before execution  
-- **Universal Design for Learning** – accessible, lightweight, and intuitive
+Semantic error detection and hints
 
----
+Interactive schema visualization
 
-## 5. Features of SQLTutor
+Animated, step-by-step query execution
 
-- **Live SQL syntax validation**  
-- **Semantic error detection and hints**  
-- **Interactive schema visualisation**  
-- **Animated, step-by-step query execution**  
-- **Built-in exercises with expected outputs**  
-- **Offline SQL execution via sql.js (WebAssembly)**  
-- **Lightweight, accessible, and open-source**
+Built-in exercises with expected outputs
 
-**Design Highlights:**
+Offline SQL execution via sql.js (WebAssembly)
 
-- Real-time debugging of missing clauses, logical errors, or incorrect syntax  
-- Visualization of table relationships and query execution flow  
-- Focus on learning and comprehension rather than gamification rewards  
+Horizontal layout for Query Breakdown, Execution Steps, and Results
 
----
+Feedback button with survey modal
 
-## 6. Comparative Research Gap
+Lightweight, accessible, and open-source
 
-| Tool | Visualization | Real-Time Feedback | Debugging Support | Notes |
-|------|---------------|-----------------|-----------------|------|
-| SQLZoo | Minimal | No | No | Engagement-focused, limited conceptual feedback |
-| SQLBolt | Static | No | No | Syntax practice only |
-| QueryVis | Yes (post-execution) | No | No | Concept visualization, no live correction |
-| SQLTutor (Proposed) | Dynamic | Yes | Yes | Prototype, accessible, integrates visualisation and debugging |
+Technology Stack
 
-**Research Gap:** Existing tools do not fully integrate **real-time feedback** with **dynamic visualisation** for accessible SQL learning. SQLTutor addresses this gap.
+Frontend: React + TypeScript
 
----
+Editor: Monaco Editor
 
-## 7. Technology Stack
+Database Engine: SQLite via sql.js (WASM)
 
-- **Frontend:** React + TypeScript  
-- **Editor:** Monaco Editor  
-- **Database Engine:** SQLite via sql.js (WASM)  
-- **Visualization:** SVG + React-driven schema and execution animations
+Visualization: SVG + React-driven schema and execution animations
 
----
+Quickstart / Usage
 
-## 8. Getting Started
+Select an exercise from the buttons at the top.
 
-### Prerequisites
+Write your SQL query in the editor.
 
-- Node.js v16+  
-- npm or yarn
+Run the query using the "Run Query" button.
 
-### Installation
+Observe:
 
-```bash
+Syntax errors (orange warnings)
+
+Semantic hints (blue feedback)
+
+Query execution steps (highlighted schema & step animation)
+
+Provide feedback via the "Give Feedback" button.
+
+Installation & Deployment
+Prerequisites
+
+Node.js v16+
+
+npm or yarn
+
+Local Installation
 git clone https://github.com/JessyJames2509/SQLTutor---thesis.git
 cd SQLTutor---thesis/sql-playground
 npm install
 npm run dev
-```
-
-### Accessing the App
-
-Open your browser and navigate to the URL shown in the terminal (default: <http://localhost:5173>).
-
-### Stopping the Server
-
-Press `Ctrl + C` in the terminal to stop the development server.
 
 
-## 9. Feedback and Contributions
+Open your browser at the URL shown in the terminal (default: http://localhost:5173
+).
 
-Constructive feedback is welcome, especially regarding:
+Build & Deploy to GitHub Pages
+npm run build
+npm run deploy
 
-- Educational effectiveness  
-- Usability for novice learners  
-- SQL correctness and edge cases  
-- Suggestions for additional exercises, visualisations, or debugging support  
+Feedback and Contributions
 
-Submit feedback via [GitHub Issues](https://github.com/JessyJames2509/SQLTutor---thesis/issues).
+Constructive feedback is welcome!
 
-## 10. Screenshots / Visual Aids
+Educational effectiveness
 
-![Schema Visualization](docs/schema.png)
-![Execution Animation](docs/execution.gif)
-![Hints Example](docs/hints.png)
+Usability for novice learners
 
-## 11. License
+SQL correctness and edge cases
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+Suggestions for additional exercises, visualizations, or debugging support
 
-## 12. References
+Submit feedback via GitHub Issues
+.
 
-- Del-Pozo-Arcos, B., & Balderas, L. (2024). SQL Learning Challenges.  
-- Miedema, A. (2024). Novice SQL Misconceptions.  
-- Leventidis, V. et al. (2020). QueryVis: Visualization Tools for SQL.  
-- Sweller, J. et al. (2019). Cognitive Load Theory in Learning.  
-- Hattie, J., & Timperley, H. (2007). The Power of Feedback.
+Screenshots
+
+Schema Visualization
+
+
+Execution Animation
+
+
+Hints Example
+
+
+Horizontal Layout & Feedback Button
+(update with screenshot of your current layout)
+
+License
+
+MIT License — see the LICENSE
+ file for details.
+
+Academic References
+
+Del-Pozo-Arcos, B., & Balderas, L. (2024). SQL Learning Challenges.
+
+Miedema, A. (2024). Novice SQL Misconceptions.
+
+Leventidis, V. et al. (2020). QueryVis: Visualization Tools for SQL.
+
+Sweller, J. et al. (2019). Cognitive Load Theory in Learning.
+
+Hattie, J., & Timperley, H. (2007). The Power of Feedback.
