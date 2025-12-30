@@ -61,6 +61,14 @@ Feedback button with survey modal
 
 Lightweight, accessible, and open-source
 
+Design Highlights:
+
+Real-time debugging of missing clauses, logical errors, or incorrect syntax
+
+Visualization of table relationships and query execution flow
+
+Focus on learning and comprehension rather than gamification rewards
+
 Technology Stack
 
 Frontend: React + TypeScript
