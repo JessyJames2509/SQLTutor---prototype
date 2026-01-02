@@ -101,7 +101,7 @@ function App() {
   const [executionSteps, setExecutionSteps] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState<number>(-1);
   const [activeTables, setActiveTables] = useState<Set<string>>(new Set());
-
+  const [showSurvey, setShowSurvey] = useState(false);
   /* =======================
      Exercises
   ======================= */
@@ -445,53 +445,206 @@ return (
         )}
       </svg>
     </div>
+    <div style={{ padding: 12 }}>
+      {/* ===== Horizontal Container ===== */}
+      <div
+        style={{
+          display: "flex",
+          flexDirection: "row", // horizontal layout
+          gap: 20,
+          flexWrap: "wrap",     // responsive
+        }}
+      >
+        {/* ===== Query Breakdown ===== */}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 200,
+            padding: 12,
+            backgroundColor: "#fafafa",
+            borderRadius: 8,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          }}
+        >
+          <h2>Query Breakdown</h2>
+          {Object.entries(queryParts).map(([k, v]: any) => (
+            <p key={k}>
+              <b>{k}</b>: {Array.isArray(v) ? v.join(" | ") : v}
+            </p>
+          ))}
+        </div>
 
-    {/* Query Breakdown */}
-    <h2>Query Breakdown</h2>
-    {Object.entries(queryParts).map(([k, v]: any) => (
-      <p key={k}>
-        <b>{k}</b>: {Array.isArray(v) ? v.join(" | ") : v}
-      </p>
-    ))}
+        {/* ===== Execution Steps ===== */}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 200,
+            padding: 12,
+            backgroundColor: "#fafafa",
+            borderRadius: 8,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+          }}
+        >
+          <h3>Execution Steps</h3>
+          {executionSteps.length === 0 && <p>No steps yet. Run a query.</p>}
+          {executionSteps.length > 0 && (
+            <ol>
+              {executionSteps.map((s, i) => (
+                <li
+                  key={i}
+                  style={{
+                    color: i === currentStep ? "green" : "black",
+                    fontWeight: i === currentStep ? "bold" : "normal",
+                  }}
+                >
+                  {s}
+                </li>
+              ))}
+            </ol>
+          )}
+        </div>
 
-    {/* Execution Animation */}
-    {executionSteps.length > 0 && (
-      <div style={{ marginTop: 10 }}>
-        <h3>Execution Steps</h3>
-        <ol>
-          {executionSteps.map((s, i) => (
-            <li
-              key={i}
+        {/* ===== Results Table ===== */}
+        <div
+          style={{
+            flex: 1,
+            minWidth: 200,
+            padding: 12,
+            backgroundColor: "#fafafa",
+            borderRadius: 8,
+            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+            overflowX: "auto", // scroll for wide tables
+          }}
+        >
+          <h3>Results</h3>
+          {rows.length === 0 && <p>No results yet.</p>}
+          {rows.length > 0 && (
+            <table
+              border={1}
               style={{
-                color: i === currentStep ? "green" : "black",
-                fontWeight: i === currentStep ? "bold" : "normal",
+                marginTop: 10,
+                width: "100%",
+                borderCollapse: "collapse",
               }}
             >
-              {s}
-            </li>
-          ))}
-        </ol>
+              <thead>
+                <tr>
+                  {columns.map((c) => (
+                    <th
+                      key={c}
+                      style={{
+                        padding: "4px 8px",
+                        textAlign: "left",
+                        backgroundColor: "#e0e0e0",
+                      }}
+                    >
+                      {c}
+                    </th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {rows.map((r, i) => (
+                  <tr key={i}>
+                    {r.map((c: any, j: number) => (
+                      <td key={j} style={{ padding: "4px 8px" }}>
+                        {c}
+                      </td>
+                    ))}
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
       </div>
-    )}
 
-    {/* Results Table */}
-    {rows.length > 0 && (
-      <table border={1} style={{ marginTop: 10 }}>
-        <thead>
-          <tr>{columns.map((c) => <th key={c}>{c}</th>)}</tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr key={i}>
-              {r.map((c: any, j: number) => (
-                <td key={j}>{c}</td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    )}
-  </div>
+      {/* ===== Feedback Button ===== */}
+      <div style={{ marginTop: 20 }}>
+        <button
+          onClick={() => setShowSurvey(true)}
+          style={{
+            padding: "10px 16px",
+            fontSize: 16,
+            backgroundColor: "#1976d2",
+            color: "white",
+            border: "none",
+            borderRadius: 6,
+            cursor: "pointer",
+          }}
+        >
+          📋 Give Feedback on This Tutor
+        </button>
+      </div>
+
+      {/* ===== Survey Modal ===== */}
+      {showSurvey && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            backgroundColor: "rgba(0,0,0,0.6)",
+            zIndex: 1000,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 10,
+          }}
+        >
+          <div
+            style={{
+              background: "white",
+              padding: 20,
+              borderRadius: 12,
+              width: "100%",
+              maxWidth: 800,
+              position: "relative",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+          >
+            {/* Close Button */}
+            <button
+              onClick={() => setShowSurvey(false)}
+              style={{
+                position: "absolute",
+                top: 10,
+                right: 10,
+                fontSize: 20,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+              }}
+            >
+              ✖
+            </button>
+
+            {/* Survey Header */}
+            <h2 style={{ marginTop: 0 }}>Evaluation Survey</h2>
+            <p>
+              Your feedback helps improve this SQL learning tool. This survey takes
+              less than 2 minutes.
+            </p>
+
+            {/* Embedded Google Form */}
+            <iframe
+              src="https://docs.google.com/forms/d/e/1FAIpQLSew607JecHfhQmGcrs-G8lxix8HGnZneUCDzMjeKfRaqOueEA/viewform?embedded=true"
+              width="100%"
+              height="500"
+              frameBorder="0"
+              style={{ borderRadius: 8 }}
+              title="SQL Tutor Feedback Form"
+            >
+              Loading…
+            </iframe>
+          </div>
+        </div>
+      )}
+    </div>
 );
 }
 
