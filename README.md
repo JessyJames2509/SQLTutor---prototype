@@ -86,40 +86,53 @@ By providing **real-time debugging hints** and **step-by-step query visualizatio
 
 ### Local Installation
 
+Run the following commands in your terminal:
+
 ```bash
 git clone https://github.com/JessyJames2509/SQLTutor---thesis.git
 cd SQLTutor---thesis/sql-playground
 npm install
-npm run dev
+npm run dev 
+```
+
 Open your browser at the URL shown in the terminal (default: http://localhost:5173).
 
 Build & Deploy to GitHub Pages
-bash
-Copy code
+```bash
 npm run build
 npm run deploy
-Feedback and Contributions
-SQL correctness and edge cases
+```
+---
 
-Suggestions for additional exercises, visualizations, or debugging support
+## Feedback and Contributions
 
-Submit feedback via GitHub Issues.
+Constructive feedback is welcome, especially regarding:
 
-Screenshots
+- SQL correctness and edge cases  
+- Suggestions for additional exercises, visualizations, or debugging support  
 
+Submit feedback via [GitHub Issues](https://github.com/JessyJames2509/SQLTutor---thesis/issues).
 
+---
 
+## Screenshots
 
-License
-MIT License — see the LICENSE file for details.
+![Schema Visualization](docs/schema.png)  
+![Execution Animation](docs/execution.gif)  
+![Hints Example](docs/hints.png)
 
-Academic References
-Del-Pozo-Arcos, B., & Balderas, L. (2024). SQL Learning Challenges.
+---
 
-Miedema, A. (2024). Novice SQL Misconceptions.
+## License
 
-Leventidis, V. et al. (2020). QueryVis: Visualization Tools for SQL.
+MIT License — see the [LICENSE](LICENSE) file for details.
 
-Sweller, J. et al. (2019). Cognitive Load Theory in Learning.
+---
 
-Hattie, J., & Timperley, H. (2007). The Power of Feedback.
+## Academic References
+
+- Del-Pozo-Arcos, B., & Balderas, L. (2024). *SQL Learning Challenges.*  
+- Miedema, A. (2024). *Novice SQL Misconceptions.*  
+- Leventidis, V. et al. (2020). *QueryVis: Visualization Tools for SQL.*  
+- Sweller, J. et al. (2019). *Cognitive Load Theory in Learning.*  
+- Hattie, J., & Timperley, H. (2007). *The Power of Feedback.*
