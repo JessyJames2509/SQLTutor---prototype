@@ -102,6 +102,38 @@ function App() {
   const [currentStep, setCurrentStep] = useState<number>(-1);
   const [activeTables, setActiveTables] = useState<Set<string>>(new Set());
   const [showSurvey, setShowSurvey] = useState(false);
+    /* =======================
+    Anonymous Session ID
+  ======================= */
+  const [sessionId] = useState(() => {
+    const existing = localStorage.getItem("sqlTutorSession");
+    if (existing) return existing;
+
+    const newId = crypto.randomUUID();
+    localStorage.setItem("sqlTutorSession", newId);
+    return newId;
+  });
+    /* =======================
+    Learning Analytics
+  ======================= */
+
+  type ExerciseProgress = {
+    attempts: number;
+    correctAttempts: number;
+    errors: number;
+    timeSpent: number;
+    completed: boolean;
+  };
+
+  type SessionStats = {
+    totalTime: number;
+    totalErrors: number;
+    exercises: Record<number, ExerciseProgress>;
+  };
+
+  const [stats, setStats] = useState<SessionStats | null>(null);
+  const [exerciseStartTime, setExerciseStartTime] = useState<number>(Date.now());
+
   /* =======================
      Exercises
   ======================= */
@@ -197,6 +229,39 @@ function App() {
     });
   }, []);
 
+
+  /* =======================
+   Initialize Analytics
+======================= */
+
+useEffect(() => {
+  const saved = localStorage.getItem("sqlTutorStats");
+  if (saved) {
+    setStats(JSON.parse(saved));
+  } else {
+    const initialExercises: Record<number, ExerciseProgress> = {};
+    exercises.forEach((_, i) => {
+      initialExercises[i] = {
+        attempts: 0,
+        correctAttempts: 0,
+        errors: 0,
+        timeSpent: 0,
+        completed: false,
+      };
+    });
+
+    const initialStats = {
+      totalTime: 0,
+      totalErrors: 0,
+      exercises: initialExercises,
+    };
+
+    setStats(initialStats);
+    localStorage.setItem("sqlTutorStats", JSON.stringify(initialStats));
+  }
+}, []);
+
+
   /* =======================
      Live Validation
   ======================= */
@@ -270,6 +335,37 @@ useEffect(() => {
 
       const expected = exercises[exerciseIndex].expected;
       const correct = JSON.stringify(res[0].values) === JSON.stringify(expected);
+          if (stats) {
+      setStats(prev => {
+        if (!prev) return prev;
+
+        const updated = { ...prev };
+        const ex = updated.exercises[exerciseIndex];
+
+        const timeSpent = Math.floor(
+          (Date.now() - exerciseStartTime) / 1000
+        );
+
+        ex.attempts += 1;
+        ex.timeSpent += timeSpent;
+        updated.totalTime += timeSpent;
+
+        if (correct) {
+          ex.correctAttempts += 1;
+          if (ex.correctAttempts >= 3) {
+            ex.completed = true;
+          }
+        } else {
+          ex.errors += 1;
+          updated.totalErrors += 1;
+        }
+
+        localStorage.setItem("sqlTutorStats", JSON.stringify(updated));
+        return updated;
+      });
+
+      setExerciseStartTime(Date.now());
+    }
       setFeedback(
         correct
           ? "✅ Correct!"
@@ -279,6 +375,30 @@ useEffect(() => {
       setError(e.message);
     }
   };
+
+    /* =======================
+      Send Data to Google Sheets
+    ======================= */
+
+    const sendSessionData = async () => {
+      if (!stats) return;
+
+      const payload = {
+        sessionId,
+        totalTime: stats.totalTime,
+        totalErrors: stats.totalErrors,
+        exercises: stats.exercises,
+      };
+
+      try {
+        await fetch("https://script.google.com/macros/s/AKfycbzdhx6pQ1u_BUtYSHPFm0Har9kpbqYKC7t4rwLLXcNHd9C1peX9NKiOcCVo-uXdJi-vcg/exec", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        });
+      } catch (err) {
+        console.error("Failed to send session data:", err);
+      }
+    };
 
   /* =======================
      UI
@@ -296,6 +416,7 @@ return (
           setQuery(e.query);
           setRows([]);
           setFeedback(null);
+          setExerciseStartTime(Date.now());
         }}
         style={{
           marginRight: 5,
@@ -306,6 +427,44 @@ return (
         {e.label}
       </button>
     ))}
+
+        {/* ===== Progress Bars ===== */}
+    {stats && (
+      <div style={{ marginTop: 15, marginBottom: 20 }}>
+        {exercises.map((_, i) => {
+          const ex = stats.exercises[i];
+          if (!ex) return null;
+
+          const percent = Math.min((ex.correctAttempts / 3) * 100, 100);
+
+          return (
+            <div key={i} style={{ marginBottom: 10 }}>
+              <div style={{ fontSize: 12 }}>
+                {ex.correctAttempts}/3 Mastery Attempts
+              </div>
+
+              <div
+                style={{
+                  height: 8,
+                  backgroundColor: "#ddd",
+                  borderRadius: 4,
+                  overflow: "hidden",
+                }}
+              >
+                <div
+                  style={{
+                    width: `${percent}%`,
+                    height: "100%",
+                    backgroundColor: ex.completed ? "green" : "#4caf50",
+                    transition: "width 0.3s ease",
+                  }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
 
     {/* Editor */}
     <Editor
@@ -562,7 +721,11 @@ return (
       {/* ===== Feedback Button ===== */}
       <div style={{ marginTop: 20 }}>
         <button
-          onClick={() => setShowSurvey(true)}
+          onClick={async () => {
+            await sendSessionData();
+            setShowSurvey(true);
+          }}
+          
           style={{
             padding: "10px 16px",
             fontSize: 16,
@@ -631,6 +794,9 @@ return (
             </p>
 
             {/* Embedded Google Form */}
+            <p style={{ fontWeight: "bold", marginBottom: 10 }}> Please copy this Session ID into the first question of the survey: <br />
+            {sessionId} </p>
+
             <iframe
               src="https://docs.google.com/forms/d/e/1FAIpQLSew607JecHfhQmGcrs-G8lxix8HGnZneUCDzMjeKfRaqOueEA/viewform?embedded=true"
               width="100%"
@@ -645,7 +811,8 @@ return (
         </div>
       )}
     </div>
-);
+  </div>  
+  );
 }
 
 export default App;
