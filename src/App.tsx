@@ -1,107 +1,439 @@
 import React, { useState, useEffect } from "react";
 import Editor from "@monaco-editor/react";
-import initSqlJs from "sql.js";
+import { initDB } from "./sqlEngine";
 import type { Database } from "sql.js";
 
 /* =======================
    Syntax Validation
 ======================= */
-const validateSyntax = (query: string): string[] => {
+const validateSyntax = (
+  query: string,
+  commandType?: "DDL" | "DML" | "DQL" | "TCL" | "DCL"
+): string[] => {
   const errors: string[] = [];
   if (!query.trim()) return ["Query is empty."];
-  if (!/SELECT/i.test(query)) errors.push("Missing SELECT clause.");
-  if (/SELECT/i.test(query) && !/FROM/i.test(query))
-    errors.push("SELECT must be followed by FROM.");
-  if (/WHERE/i.test(query) && !/=|<|>|LIKE/i.test(query))
-    errors.push("WHERE clause appears incomplete.");
-  if (/JOIN/i.test(query) && !/ON/i.test(query))
-    errors.push("JOIN requires an ON condition.");
-  if (/SELECT\s+[^,]+[^,\s]\s+[^,]+\s+FROM/i.test(query))
-    errors.push("Possible missing comma between selected columns.");
+
+  switch (commandType) {
+    case "DQL": // SELECT queries
+      if (!/SELECT/i.test(query)) errors.push("Missing SELECT clause.");
+      if (/SELECT/i.test(query) && !/FROM/i.test(query))
+        errors.push("SELECT must be followed by FROM.");
+      if (/WHERE/i.test(query) && !/=|<|>|LIKE/i.test(query))
+        errors.push("WHERE clause appears incomplete.");
+      if (/JOIN/i.test(query) && !/ON/i.test(query))
+        errors.push("JOIN requires an ON condition.");
+      if (/SELECT\s+[^,]+[^,\s]\s+[^,]+\s+FROM/i.test(query))
+        errors.push("Possible missing comma between selected columns.");
+      break;
+
+    case "DDL": // CREATE, ALTER, DROP TABLE
+      if (!/(CREATE|ALTER|DROP)\s+TABLE/i.test(query))
+        errors.push("Expected DDL command: CREATE, ALTER, or DROP TABLE.");
+      break;
+
+    case "DML": // INSERT, UPDATE, DELETE
+      if (!/(INSERT|UPDATE|DELETE)/i.test(query))
+        errors.push("Expected DML command: INSERT, UPDATE, or DELETE.");
+      break;
+
+    default:
+      break;
+  }
+
   return errors;
 };
+
+// -----------------------
+  // Extract affected tables & columns
+  // -----------------------
+  const parseAffectedTablesAndColumns = (query: string, command: string) => {
+    const tables: string[] = [];
+    const columns: string[] = [];
+
+    const cleanQuery = query.replace(/'[^']*'|"[^"]*"/g, "");
+
+    const tablePatterns: RegExp[] = [
+      /FROM\s+([^\s,;()]+)/gi,
+      /JOIN\s+([^\s,;()]+)/gi,
+      /UPDATE\s+([^\s,;()]+)/gi,
+      /INSERT\s+INTO\s+([^\s(]+)/gi,
+      /DELETE\s+FROM\s+([^\s;]+)/gi,
+      /CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+([^\s(]+)/gi,
+      /ALTER\s+TABLE\s+([^\s]+)/gi,
+      /DROP\s+TABLE(?:\s+IF\s+EXISTS)?\s+([^\s;]+)/gi
+    ];
+
+    tablePatterns.forEach(pattern => {
+      let match;
+      while ((match = pattern.exec(cleanQuery)) !== null) {
+        const t = match[1].trim().replace(/[`'"]/g, "");
+        if (t && !tables.includes(t)) tables.push(t);
+      }
+    });
+
+    if (command === "ALTER TABLE") {
+      const colMatch = query.match(/ADD\s+COLUMN\s+([^\s;]+)/i);
+      if (colMatch) columns.push(colMatch[1].trim().replace(/[`'"]/g, ""));
+    } else if (command === "INSERT") {
+      const colMatch = query.match(/INSERT\s+INTO\s+[^\s(]+\s*\(([^)]+)\)/i);
+      if (colMatch) {
+        colMatch[1].split(",").forEach(c => columns.push(c.trim()));
+      }
+    } else if (command === "UPDATE") {
+      const setMatches = query.matchAll(/SET\s+([^\s=]+)\s*=/gi);
+      for (const m of setMatches) columns.push(m[1].trim());
+    }
+
+    return { tables, columns };
+  };
 
 /* =======================
    Query Parsing
 ======================= */
-const parseQueryParts = (query: string) => ({
-  SELECT: query.match(/SELECT\s+(.+?)\s+FROM/i)?.[1] || "",
-  FROM: query.match(/FROM\s+([^\s;]+)/i)?.[1] || "",
-  WHERE: query.match(/WHERE\s+(.+?)(?:;|$)/i)?.[1] || "",
-  JOIN: [...query.matchAll(/JOIN\s+([^\s]+)\s+ON\s+([^\s;]+)/gi)].map(
-    (j) => `${j[1]} ON ${j[2]}`
-  ),
-});
+const parseQueryParts = (query: string) => {
+  const selectMatch = query.match(/SELECT\s+(.+?)\s+FROM/i);
+  const fromMatch = query.match(/FROM\s+([^\s;]+)/i);
+
+  // Capture JOIN tables and optional aliases
+  const joinMatches = [...query.matchAll(/JOIN\s+([^\s]+)(?:\s+AS\s+|\s+)?([^\s]+)?/gi)];
+
+  const joins = joinMatches.map(j => ({
+    table: j[1],
+    alias: j[2] || null,
+  }));
+
+  // FROM table + alias
+  const fromTable = fromMatch?.[1].split(/\s+AS\s+|\s+/i)[0] || "";
+  const fromAlias = fromMatch?.[1].split(/\s+AS\s+|\s+/i)[1] || null;
+
+  const where = query.match(/WHERE\s+(.+?)(?:;|$)/i)?.[1] || "";
+
+  return {
+    SELECT: selectMatch?.[1] || "",
+    FROM: { table: fromTable, alias: fromAlias },
+    JOIN: joins,
+    WHERE: where,
+  };
+};
 
 /* =======================
-   Hint Generator
+   Build Execution Steps
+   Works for DDL, DML, DQL
 ======================= */
-const generateHints = (
+const buildExecutionSteps = (
+  command: string,
   query: string,
-  rows: any[][],
-  expected: any[][],
   schema: { table: string; columns: string[] }[]
 ) => {
-  const hints: string[] = [];
+  const steps: string[] = [];
 
-  // No results returned
-  if (rows.length === 0) {
-    hints.push("Your query returned no rows. Check filtering conditions.");
+  if (command === "SELECT") {
+    const parts = parseQueryParts(query);
+    if (parts.FROM) steps.push(`FROM ${parts.FROM}`);
+    parts.JOIN.forEach(j => steps.push(`JOIN ${j}`));
+    if (parts.WHERE) steps.push(`WHERE ${parts.WHERE}`);
+    if (parts.SELECT) steps.push(`SELECT ${parts.SELECT}`);
+  } 
+    else if (["INSERT", "UPDATE", "DELETE"].includes(command)) {
+    schema.forEach(t => {
+      if (query.includes(t.table)) steps.push(`${command} on table ${t.table}`);
+    });
+  } else if (["CREATE TABLE", "ALTER TABLE", "DROP TABLE"].includes(command)) {
+    steps.push(`${command} executed`);
   }
 
-  // Column count mismatch
-  const selectedCols =
-    query.match(/SELECT\s+(.+?)\s+FROM/i)?.[1]?.split(",").length;
-  if (selectedCols && expected[0] && selectedCols !== expected[0].length) {
-    hints.push("Selected column count does not match expected output.");
-  }
+  return steps;
+};
 
-  // Column used without table reference (semantic clarity)
-  schema.forEach((t) =>
-    t.columns.forEach((c) => {
-      if (query.includes(c) && !query.includes(t.table)) {
+
+  /* =======================
+    Hint Generator (Enhanced)
+  ======================= */
+  const generateHints = (
+    query: string,
+    rows: any[][],
+    _expected: any[][],
+    schema: { table: string; columns: string[] }[],
+    command?: string
+  ): string[] => {
+    const hints: string[] = [];
+
+    // -----------------------
+    // Special handling for ALTER TABLE
+    // -----------------------
+    if (command?.toUpperCase() === "ALTER TABLE") {
+      const tableMatch = query.match(/ALTER\s+TABLE\s+([^\s]+)/i);
+      const columnMatch =
+        query.match(/ADD\s+COLUMN\s+([^\s]+)/i) || query.match(/ADD\s+([^\s]+)/i);
+
+      if (tableMatch && columnMatch) {
+        const tableName = tableMatch[1].replace(/[`'";]/g, "").trim();
+        const columnName = columnMatch[1].replace(/[`'";]/g, "").trim();
+
+        const table = schema.find(
+          (t) => t.table.toLowerCase() === tableName.toLowerCase()
+        );
+        if (table && table.columns.includes(columnName)) {
+          hints.push(
+            `✅ Column "${columnName}" successfully added to "${tableName}".`
+          );
+          hints.push(
+            `💡 New column will be NULL for existing rows. Use UPDATE to set values.`
+          );
+        }
+      }
+      return hints;
+    }
+
+    // -----------------------
+    // No results returned
+    // -----------------------
+    if (rows.length === 0 && command?.toUpperCase() === "SELECT") {
+      const match = query.match(/FROM\s+([^\s;]+)/i);
+      const fromTable = match?.[1]?.replace(/[`'";]/g, "").trim();
+
+      const tableExists = fromTable
+        ? schema.some((t) => t.table.toLowerCase() === fromTable.toLowerCase())
+        : false;
+
+      if (tableExists) {
         hints.push(
-          `Column "${c}" is used but table "${t.table}" is not referenced.`
+          `✅ Table "${fromTable}" exists but contains no rows. Use INSERT to add data.`
+        );
+      } else {
+        hints.push(
+          "Your query returned no rows. Check filtering conditions or table name."
         );
       }
-    })
-  );
+    } else if (rows.length === 0 && ["UPDATE", "DELETE"].includes(command || "")) {
+      const affectedTable = schema.find((t) => query.includes(t.table));
+      if (affectedTable) {
+        hints.push(
+          `Table "${affectedTable.table}" exists but has no rows to modify.`
+        );
+      } else {
+        hints.push("No rows were affected. Check your query conditions.");
+      }
+    }
 
-  // Missing JOIN when multiple tables are expected
-  if (expected[0]?.length > 1 && !/JOIN/i.test(query)) {
-    hints.push("This task likely requires a JOIN between tables.");
-  }
+    // -----------------------
+    // Column count mismatch
+    // -----------------------
+    if (command?.toUpperCase() === "SELECT" && rows[0]) {
+      const selectedColsText =
+        query.match(/SELECT\s+(.+?)\s+FROM/i)?.[1]?.trim() || "";
 
-  // Aggregate functions without GROUP BY (semantic debugging)
-  if (
-    /SELECT\s+.*(COUNT|SUM|AVG|MIN|MAX)\s*\(/i.test(query) &&
-    !/GROUP BY/i.test(query)
-  ) {
-    hints.push(
-      "Aggregate function detected but GROUP BY clause is missing."
-    );
-  }
+      let selectedColsCount: number;
+      if (!selectedColsText || selectedColsText === "*") {
+        selectedColsCount = rows[0].length; // SELECT * matches actual columns
+      } else {
+        selectedColsCount = selectedColsText.split(",").map((c) => c.trim()).length;
+      }
 
-  return hints;
+      if (selectedColsCount !== rows[0].length) {
+        hints.push("Selected column count does not match expected output.");
+      }
+    }
+
+    // -----------------------
+    // Column used without table reference
+    // -----------------------
+    if (command?.toUpperCase() === "SELECT") {
+      const parts = parseQueryParts(query);
+      const referencedTables = [parts.FROM.table, ...parts.JOIN.map((j) => j.table)];
+
+      schema.forEach((t) => {
+        t.columns.forEach((c) => {
+          if (parts.SELECT === "*" || !query.match(new RegExp(`\\b${c}\\b`, "i")))
+            return;
+
+          if (!referencedTables.includes(t.table)) {
+            hints.push(
+              `Column "${c}" is used but table "${t.table}" is not referenced in this query.`
+            );
+          }
+        });
+      });
+    }
+
+    // -----------------------
+    // Aggregate functions without GROUP BY
+    // -----------------------
+    if (
+      command?.toUpperCase() === "SELECT" &&
+      /SELECT\s+.*(COUNT|SUM|AVG|MIN|MAX)\s*\(/i.test(query) &&
+      !/GROUP BY/i.test(query)
+    ) {
+      hints.push("Aggregate function detected but GROUP BY clause is missing.");
+    }
+
+    // -----------------------
+    // Generic DDL/DML hints
+    // -----------------------
+    const ddlDmlCommands: Record<string, RegExp> = {
+      "CREATE TABLE": /CREATE\s+TABLE\s+(IF NOT EXISTS\s+)?([^\s(]+)/i,
+      "ALTER TABLE": /ALTER\s+TABLE\s+([^\s]+)/i,
+      "DROP TABLE": /DROP\s+TABLE\s+(IF EXISTS\s+)?([^\s;]+)/i,
+      INSERT: /INSERT\s+INTO\s+([^\s(]+)/i,
+      UPDATE: /UPDATE\s+([^\s]+)/i,
+      DELETE: /DELETE\s+FROM\s+([^\s;]+)/i,
+    };
+
+    Object.entries(ddlDmlCommands).forEach(([cmdName, regex]) => {
+      if (command?.toUpperCase().startsWith(cmdName.split(" ")[0])) {
+        const match = query.match(regex);
+        const tableName = match?.[2] || match?.[1];
+        if (tableName) {
+          const cleanTableName = tableName.replace(/[`'";]/g, "").trim();
+          if (cmdName === "CREATE TABLE") {
+            hints.push(`Table "${cleanTableName}" has been created (currently empty).`);
+          } else if (cmdName === "ALTER TABLE") {
+            hints.push(`Table "${cleanTableName}" has been altered. Check updated columns.`);
+          } else if (cmdName === "DROP TABLE") {
+            hints.push(`Table "${cleanTableName}" has been deleted from the schema.`);
+          } else if (cmdName === "INSERT") {
+            hints.push(`Row(s) inserted into table "${cleanTableName}".`);
+          } else if (cmdName === "UPDATE") {
+            hints.push(`UPDATE executed on table "${cleanTableName}". Check affected rows.`);
+          } else if (cmdName === "DELETE") {
+            hints.push(`DELETE executed on table "${cleanTableName}". Check if rows were removed.`);
+          }
+        } else {
+          hints.push(`${cmdName} executed (table name not detected).`);
+        }
+      }
+    });     
+
+    return hints;
+  };
+
+const commandSyntax: Record<string, string> = {
+      "SELECT": "SELECT column1, column2 FROM table [JOIN table2 ON condition] [WHERE condition] [GROUP BY column] [ORDER BY column];",
+      "INSERT": "INSERT INTO table (col1, col2) VALUES (val1, val2);",
+      "UPDATE": "UPDATE table SET col1 = val1, col2 = val2 WHERE condition;",
+      "DELETE": "DELETE FROM table WHERE condition;",
+      "CREATE TABLE": "CREATE TABLE table_name (column1 TYPE, column2 TYPE, ...);",
+      "ALTER TABLE": "ALTER TABLE table_name ADD COLUMN column_name TYPE;",
+      "DROP TABLE": "DROP TABLE table_name;"
+    };
+
+const generateHintsWithSyntax = (
+      query: string,
+      rows: any[][],
+      _expected: any[][],
+      schema: { table: string; columns: string[] }[],
+      command?: string
+    ) => {
+      const hints = generateHints(query, rows, _expected, schema, command);
+      const syntaxTips: string[] = [];
+
+      if (!command) return { hints, syntaxTips };
+
+      // Add syntax tip for main command
+      if (commandSyntax[command.toUpperCase()]) {
+        syntaxTips.push(commandSyntax[command.toUpperCase()]);
+      }
+
+      // Detect aggregate / JOIN usage for more context
+      if (/JOIN/i.test(query)) syntaxTips.push("💡 JOIN syntax: table1 JOIN table2 ON condition");
+      if (/AVG|SUM|COUNT|MIN|MAX/i.test(query)) syntaxTips.push("💡 Aggregates require SELECT ... FROM ... [GROUP BY ...]");
+
+      return { hints, syntaxTips };
+    };
+
+/*tree*/
+const sqlCommandTree = {
+  DDL: { description: "Define database structure", commands: ["CREATE TABLE", "ALTER TABLE", "DROP TABLE"] },
+  DML: { description: "Manipulate stored data", commands: ["INSERT", "UPDATE", "DELETE"] },
+  DQL: { description: "Query data", commands: ["SELECT"] },
+  TCL: { description: "Transaction Control (Future Work)", commands: [] },
+  DCL: { description: "Access Control (Future Work)", commands: [] }
 };
+
+  
 /* =======================
    App
 ======================= */
 function App() {
-  const [db, setDb] = useState<Database | null>(null);
-  const [query, setQuery] = useState("");
+  const [db, setDb] = useState<any>(null);
+
+  useEffect(() => {
+    (async () => {
+      const database = await initDB();
+      setDb(database);
+      updateSchemaFromDB(database);
+    })();
+  }, []);
+  // Core query + results
+  const [query, setQuery] = useState("SELECT * FROM students;");
   const [columns, setColumns] = useState<string[]>([]);
   const [rows, setRows] = useState<any[][]>([]);
-  const [schema, setSchema] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
-  const [syntaxErrors, setSyntaxErrors] = useState<string[]>([]);
-  const [queryParts, setQueryParts] = useState<any>({});
-  const [hoveredTable, setHoveredTable] = useState<string | null>(null);
+  const [syntaxHints, setSyntaxHints] = useState<string[]>([]);
+
+  // Execution steps animation
   const [executionSteps, setExecutionSteps] = useState<string[]>([]);
   const [currentStep, setCurrentStep] = useState<number>(-1);
   const [activeTables, setActiveTables] = useState<Set<string>>(new Set());
+  const executionLock = React.useRef(false);
+
+  // Schema + hover
+  type TableSchema = {
+    table: string;
+    columns: string[];
+    pk?: string;
+    fk?: string[];
+    ref?: React.RefObject<HTMLDivElement | null>;
+  };
+  const [schema, setSchema] = useState<TableSchema[]>([]);
+  const [syntaxErrors, setSyntaxErrors] = useState<string[]>([]);
+  const [hoveredTable, setHoveredTable] = useState<string | null>(null);
+
+  // UI state
   const [showSurvey, setShowSurvey] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
+
+  // Command templates
+  const commandTemplates: Record<string, string> = {
+    "CREATE TABLE": `
+      CREATE TABLE IF NOT EXISTS new_table (
+        id INTEGER PRIMARY KEY,
+        name TEXT
+      );`,
+
+    "ALTER TABLE": `
+      ALTER TABLE new_table
+      ADD COLUMN created_at TEXT;`,
+
+    "DROP TABLE": `
+      DROP TABLE IF EXISTS new_table;`,
+
+    "INSERT": `
+      INSERT INTO students (name, grade)
+      VALUES ('New Student', 10);`,
+
+    "UPDATE": `
+      UPDATE students
+      SET grade = 11
+      WHERE name = 'Alice';`,
+
+    "DELETE": `
+      DELETE FROM students
+      WHERE name = 'Bob';`,
+
+    "SELECT": `
+      SELECT * FROM students;`
+  };
+  const loadCommand = (cmd: string) => {
+    setSelectedCommand(cmd);
+    setQuery(commandTemplates[cmd]);
+    setRows([]);
+    setFeedback(null);
+  };
+
+
     /* =======================
     Anonymous Session ID
   ======================= */
@@ -113,398 +445,739 @@ function App() {
     localStorage.setItem("sqlTutorSession", newId);
     return newId;
   });
-    /* =======================
-    Learning Analytics
-  ======================= */
 
-  type ExerciseProgress = {
-    attempts: number;
-    correctAttempts: number;
-    errors: number;
-    timeSpent: number;
-    completed: boolean;
-  };
+  // =======================
+// LogOuts
+// =======================
+  const [sessionStart] = useState<number>(Date.now());
+  const [attemptCount, setAttemptCount] = useState(0);
+  const [successCount, setSuccessCount] = useState(0);
+  const [syntaxErrorCount, setSyntaxErrorCount] = useState(0);
+  const [runtimeErrorCount, setRuntimeErrorCount] = useState(0);
+  const [sessionLog, setSessionLog] = useState<any[]>([]);
 
-  type SessionStats = {
-    totalTime: number;
-    totalErrors: number;
-    exercises: Record<number, ExerciseProgress>;
-  };
+const taskStartTime = React.useRef<number | null>(null);
 
-  const [stats, setStats] = useState<SessionStats | null>(null);
-  const [exerciseStartTime, setExerciseStartTime] = useState<number>(Date.now());
+const exportSessionToGoogleForm = async () => {
+  const formUrl =
+    "https://docs.google.com/forms/d/e/1FAIpQLSeMi643PDgIHbMdkZ51V0vy5gZ7YttXaQfeRgeQsUz9nz3TPA/formResponse";
+    
+  const formData = new FormData();
+  formData.append("entry.1551736835", sessionId);
+  formData.append("entry.2064822524", sessionStart.toString());
+  formData.append("entry.470939570", Date.now().toString());
+  formData.append("entry.247120678", attemptCount.toString());
+  formData.append("entry.1937591829", successCount.toString());
+  formData.append("entry.1301925902", syntaxErrorCount.toString());
+  formData.append("entry.472636069", runtimeErrorCount.toString());
+  formData.append("entry.214384545", JSON.stringify(sessionLog));
 
-  /* =======================
-     Exercises
-  ======================= */
-  const exercises = [
-    {
-      label: "All Students",
-      query: "SELECT * FROM students;",
-      expected: [
-        [1, "Alice", 10],
-        [2, "Bob", 10],
-        [3, "Charlie", 11],
-        [4, "David", 12],
-      ],
-    },
-    {
-      label: "Grade 10 Students",
-      query: "SELECT name FROM students WHERE grade = 10;",
-      expected: [["Alice"], ["Bob"]],
-    },
-    {
-      label: "Top Scores",
-      query:
-        "SELECT s.name, c.title, e.score FROM enrollments e JOIN students s ON e.student_id = s.id JOIN courses c ON e.course_id = c.id WHERE e.score >= 90;",
-      expected: [["Alice", "Math", 95]],
-    },
-    {
-      label: "Teachers and Departments",
-      query:
-        "SELECT t.name, d.name FROM teachers t JOIN departments d ON t.department_id = d.id;",
-      expected: [["Mr. Smith", "Math"], ["Ms. Johnson", "Science"]],
-    },
-    {
-      label: "Courses in Classrooms",
-      query:
-        "SELECT c.title, r.name FROM courses c JOIN classrooms r ON c.id = r.id;", // simple example mapping courses to classrooms by ID
-      expected: [["Math", "Room A"], ["Science", "Room B"]],
-    },
-  ];
-
-  const [exerciseIndex, setExerciseIndex] = useState(0);
-
-  /* =======================
-     Init Database
-  ======================= */
-  useEffect(() => {
-    initSqlJs({
-      locateFile: (file) =>
-        new URL(`/node_modules/sql.js/dist/${file}`, import.meta.url).toString(),
-    }).then((SQL) => {
-      const database = new SQL.Database();
-
-      // Create all tables including new ones
-      database.run(`
-        CREATE TABLE students(id INTEGER PRIMARY KEY, name TEXT, grade INTEGER);
-        CREATE TABLE courses(id INTEGER PRIMARY KEY, title TEXT);
-        CREATE TABLE enrollments(id INTEGER PRIMARY KEY, student_id INTEGER, course_id INTEGER, score INTEGER);
-        CREATE TABLE teachers(id INTEGER PRIMARY KEY, name TEXT, department_id INTEGER);
-        CREATE TABLE departments(id INTEGER PRIMARY KEY, name TEXT);
-        CREATE TABLE classrooms(id INTEGER PRIMARY KEY, name TEXT, capacity INTEGER);
-
-        INSERT INTO students VALUES
-          (1,'Alice',10),(2,'Bob',10),(3,'Charlie',11),(4,'David',12);
-
-        INSERT INTO courses VALUES
-          (1,'Math'),(2,'Science');
-
-        INSERT INTO enrollments VALUES
-          (1,1,1,95),(2,2,2,88),(3,3,1,75),(4,4,2,60);
-
-        INSERT INTO departments VALUES
-          (1,'Math'),(2,'Science');
-
-        INSERT INTO teachers VALUES
-          (1,'Mr. Smith',1),(2,'Ms. Johnson',2);
-
-        INSERT INTO classrooms VALUES
-          (1,'Room A',30),(2,'Room B',25);
-      `);
-
-      const tables = database
-        .exec("SELECT name FROM sqlite_master WHERE type='table'")
-        [0].values.map(([t]: any) => ({
-          table: t,
-          columns: database.exec(`PRAGMA table_info(${t})`)[0].values.map(
-            (c: any) => c[1]
-          ),
-          ref: React.createRef<HTMLDivElement>(),
-        }));
-
-      setSchema(tables);
-      setDb(database);
-      setQuery(exercises[0].query);
+  try {
+    await fetch(formUrl, {
+      method: "POST",
+      mode: "no-cors",
+      body: formData,
     });
-  }, []);
-
-
-  /* =======================
-   Initialize Analytics
-======================= */
-
-useEffect(() => {
-  const saved = localStorage.getItem("sqlTutorStats");
-  if (saved) {
-    setStats(JSON.parse(saved));
-  } else {
-    const initialExercises: Record<number, ExerciseProgress> = {};
-    exercises.forEach((_, i) => {
-      initialExercises[i] = {
-        attempts: 0,
-        correctAttempts: 0,
-        errors: 0,
-        timeSpent: 0,
-        completed: false,
-      };
-    });
-
-    const initialStats = {
-      totalTime: 0,
-      totalErrors: 0,
-      exercises: initialExercises,
-    };
-
-    setStats(initialStats);
-    localStorage.setItem("sqlTutorStats", JSON.stringify(initialStats));
+    console.log("Session logs exported to Google Form ✅");
+  } catch (err) {
+    console.error("Failed to export session logs:", err);
   }
-}, []);
+};
 
 
   /* =======================
      Live Validation
   ======================= */
-useEffect(() => {
-  const syntaxErrs = validateSyntax(query);
-  setSyntaxErrors(syntaxErrs);
-
-  if (db && syntaxErrs.length === 0) {
-    try {
-      const res = db.exec(query);
-      const expected = exercises[exerciseIndex].expected;
-      const hints = res.length
-        ? generateHints(query, res[0].values, expected, schema)
+    useEffect(() => {
+      // Only syntax validation, no automatic SELECT execution
+      const syntaxErrs = selectedCategory
+        ? validateSyntax(query, selectedCategory as any)
         : [];
-      setFeedback(hints.join(" • "));
-    } catch {
-      // ignore while typing
-    }
-  }
-}, [query, db]);
+      setSyntaxErrors(syntaxErrs);
 
-  /* =======================
-     Run Query
-  ======================= */
-  const runQuery = async () => {
-    if (!db || syntaxErrors.length > 0) return;
-    setExecutionSteps([]);
-    setCurrentStep(-1);
-
-    try {
-      setError(null);
+      // Clear previous feedback if query changed but do not execute SELECT
       setFeedback(null);
+    }, [query, selectedCategory]);
 
-      const parts = parseQueryParts(query);
 
-      // Animate steps
-      const steps: string[] = [];
-      if (parts.FROM) steps.push(`FROM ${parts.FROM}`);
-      parts.JOIN.forEach((j) => steps.push(`JOIN ${j}`));
-      if (parts.WHERE) steps.push(`WHERE ${parts.WHERE}`);
-      if (parts.SELECT) steps.push(`SELECT ${parts.SELECT}`);
-      setExecutionSteps(steps);
 
-      for (let i = 0; i < steps.length; i++) {
-        setCurrentStep(i);
+      const updateSchemaFromDB = (database: Database) => {
+        const res = database.exec(`SELECT name FROM sqlite_master WHERE type='table';`);
+        if (!res[0]) return;
 
-        const step = steps[i];
-        const nextActive = new Set<string>();
+        const tables: TableSchema[] = res[0].values
+          .map(([tableName]) => {
+            const cleanTable = tableName.toString();
+            if (cleanTable === "sqlite_sequence") return null; // hide internal SQLite table
 
-        if (typeof step === "string") {
-          schema.forEach((t: any) => {
-            if (step.includes(t.table)) nextActive.add(t.table);
+            // Get all columns dynamically
+            const colRes = database.exec(`PRAGMA table_info(${cleanTable});`);
+            const cols = colRes[0]?.values.map((c: any) => c[1]) || [];
+            const pk = colRes[0]?.values.find((c: any) => c[5] === 1)?.[1] || undefined;
+
+            return {
+              table: cleanTable,
+              columns: cols,
+              pk,
+              fk: [],
+              ref: React.createRef<HTMLDivElement | null>(),
+            };
+          })
+          .filter(Boolean) as TableSchema[];
+
+        setSchema(tables);
+      };
+
+      const runSelect = () => {
+        setExecutionSteps([]);
+        setCurrentStep(-1);
+        if (!db) return;
+
+        // Helper: extract table names
+        const extractTableNames = (query: string): string[] => {
+          const tables: string[] = [];
+          const cleanQuery = query.replace(/'[^']*'|"[^"]*"/g, ''); // remove string literals
+
+          const patterns = [
+            /FROM\s+([^\s,;()]+)/gi,
+            /JOIN\s+([^\s,;()]+)/gi
+          ];
+
+          patterns.forEach(pattern => {
+            let match;
+            while ((match = pattern.exec(cleanQuery)) !== null) {
+              const tableName = match[1].trim().replace(/[`'"]/g, '');
+              if (tableName && !tables.includes(tableName)) tables.push(tableName);
+            }
           });
+
+          return tables;
+        };
+
+        try {
+          const res = db.exec(query);
+
+          if (!res.length || !res[0]) {
+            setColumns([]);
+            setRows([]);
+
+            const { hints, syntaxTips } = generateHintsWithSyntax(query, res[0]?.values || [], [], schema, "SELECT");
+
+            setFeedback(
+              hints.length > 0
+                ? hints.join(" • ")
+                : "✅ Query executed successfully."
+            );
+            setSyntaxHints(syntaxTips);
+
+            return;
+          }
+
+          setColumns(res[0].columns);
+          setRows(res[0].values);
+
+          const hints = generateHints(query, res[0].values, [], schema, "SELECT");
+
+          setFeedback(
+            hints.length
+              ? hints.join(" • ")
+              : "✅ Query executed successfully."
+          );
+
+          const tables = extractTableNames(query);
+          if (tables.length) setActiveTables(new Set(tables));
+
+        } catch (e: any) {
+          setError(e.message);
+        }
+      };
+
+      /* =======================
+        Decide What To Execute
+        (Prevents auto SELECT after mutations)
+      ======================= */
+      const handleRun = () => {
+        setAttemptCount(prev => prev + 1); 
+        if (!db) return;
+        // Start timer on first interaction
+        if (!taskStartTime.current) {
+          taskStartTime.current = Date.now();
         }
 
+        // Count attempt
+        
+        const cmd = (selectedCommand ?? query)
+          .trim()
+          .split(" ")[0]
+          .toUpperCase();
+
+        if (cmd === "SELECT") {
+          runSelect();   // ONLY read data
+        } else {
+          runQuery();    // ONLY mutate database
+        }
+      };
+
+      /* =======================
+      Run Query
+    ======================= */
+    
+
+const runQuery = async () => {
+  // 🚫 Ignore React StrictMode replay
+  if (executionLock.current) return;
+
+  executionLock.current = true;
+  if (!db) {
+    executionLock.current = false; // release lock
+    return;
+  }
+
+  // Reset states
+  setExecutionSteps([]);
+  setCurrentStep(-1);
+  setError(null);
+  setFeedback(null);
+
+    const upper = query.trim().toUpperCase();
+
+    let command = "";
+    if (upper.startsWith("CREATE TABLE")) command = "CREATE TABLE";
+    else if (upper.startsWith("ALTER TABLE")) command = "ALTER TABLE";
+    else if (upper.startsWith("DROP TABLE")) command = "DROP TABLE";
+    else if (upper.startsWith("INSERT")) command = "INSERT";
+    else if (upper.startsWith("UPDATE")) command = "UPDATE";
+    else if (upper.startsWith("DELETE")) command = "DELETE";
+    else if (upper.startsWith("SELECT")) command = "SELECT";
+
+  // -----------------------
+  // Validate syntax
+  // -----------------------
+  const syntaxErrs = validateSyntax(query, selectedCategory as any);
+  setSyntaxErrors(syntaxErrs);
+  if (syntaxErrs.length > 0) {
+    setSyntaxErrorCount(prev => prev + 1);
+    
+    setFeedback("⚠ Fix syntax errors before running the query.");
+    executionLock.current = false;
+    return;
+  }
+  
+  // 👇 THIS is what you use now
+  const { tables: affectedTables, columns: affectedColumns } =
+    parseAffectedTablesAndColumns(query, command);
+
+  // -----------------------
+  // Table/column existence checks
+  // -----------------------
+
+  // CREATE TABLE
+  if (command === "CREATE TABLE" && affectedTables.length > 0) {
+    const tableName = affectedTables[0];
+    const tableExistsRes = db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}';`
+    );
+    if (tableExistsRes[0]?.values?.length) {
+      setFeedback(`⚠ Table "${tableName}" already exists.`);
+      executionLock.current = false;
+      return;
+    }
+  }
+
+  // ALTER TABLE
+  if (command === "ALTER TABLE" && affectedTables.length > 0 && affectedColumns.length > 0) {
+    const tableName = affectedTables[0];
+    const colName = affectedColumns[0];
+    const colRes = db.exec(`PRAGMA table_info(${tableName});`);
+    const existingCols: string[] = colRes[0]?.values.map((c: any) => c[1]) || [];
+
+    if (existingCols.includes(colName)) {
+      setFeedback(`⚠ Column "${colName}" already exists in table "${tableName}".`);
+      executionLock.current = false;
+      return;
+    }
+  }
+
+  // DROP TABLE
+  if (command === "DROP TABLE" && affectedTables.length > 0) {
+    const tableName = affectedTables[0];
+    const tableExistsRes = db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}';`
+    );
+    if (!tableExistsRes[0]?.values?.length) {
+      setFeedback(`⚠ Table "${tableName}" does not exist.`);
+      executionLock.current = false;
+      return;
+    }
+  }
+
+  // INSERT / UPDATE / DELETE table check
+  if (["INSERT", "UPDATE", "DELETE"].includes(command) && affectedTables.length > 0) {
+    const tableName = affectedTables[0];
+    const tableExistsRes = db.exec(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}';`
+    );
+    if (!tableExistsRes[0]?.values?.length) {
+      setFeedback(`⚠ Table "${tableName}" does not exist.`);
+      executionLock.current = false;
+      return;
+    }
+  }
+
+  // INSERT column check
+  if (command === "INSERT" && affectedTables.length > 0 && affectedColumns.length > 0) {
+    const tableName = affectedTables[0];
+    const colRes = db.exec(`PRAGMA table_info(${tableName});`);
+    const existingCols: string[] = colRes[0]?.values.map((c: any) => c[1]) || [];
+    const invalidCols: string[] = affectedColumns.filter((c: string) => !existingCols.includes(c));
+
+    if (invalidCols.length > 0) {
+      setFeedback(`⚠ Column(s) ${invalidCols.join(", ")} do not exist in table "${tableName}".`);
+      executionLock.current = false;
+      return;
+    }
+  }
+
+  // UPDATE column check
+  if (command === "UPDATE" && affectedTables.length > 0 && affectedColumns.length > 0) {
+    const tableName = affectedTables[0];
+    const colRes = db.exec(`PRAGMA table_info(${tableName});`);
+    const existingCols: string[] = colRes[0]?.values.map((c: any) => c[1]) || [];
+    const invalidCols: string[] = affectedColumns.filter((c: string) => !existingCols.includes(c));
+
+    if (invalidCols.length > 0) {
+      setFeedback(`⚠ Column(s) ${invalidCols.join(", ")} do not exist in table "${tableName}".`);
+      executionLock.current = false;
+      return;
+    }
+  }
+
+  // SELECT tables exist check
+  if (command === "SELECT" && affectedTables.length > 0) {
+    const missingTables: string[] = affectedTables.filter(
+      (t: string) =>
+        !db.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${t}';`)[0]?.values?.length
+    );
+    if (missingTables.length > 0) {
+      setFeedback(`⚠ Table(s) ${missingTables.join(", ")} do not exist.`);
+      executionLock.current = false;
+      return;
+    }
+  }
+
+  try {
+    // -----------------------
+    // Build execution steps
+    // -----------------------
+    const steps = buildExecutionSteps(command, query, schema);
+    setExecutionSteps(steps);
+
+    // Animate steps visually
+    for (let i = 0; i < steps.length; i++) {
+      await new Promise(r => {
+        setCurrentStep(i);
+        const step = steps[i];
+        const nextActive = new Set<string>();
+        schema.forEach(t => { if (step.includes(t.table)) nextActive.add(t.table); });
         setActiveTables(nextActive);
-        await new Promise((r) => setTimeout(r, 400));
-      }       
+        setTimeout(r, 400);
+      });
+    }
 
-      const res = db.exec(query);
-      setQueryParts(parts);
+    // Store row count before operation for DML commands
+    let beforeCount = 0;
+    if (["INSERT", "UPDATE", "DELETE"].includes(command) && affectedTables.length > 0) {
+      try {
+        const countRes = db.exec(`SELECT COUNT(*) FROM ${affectedTables[0]};`);
+        if (countRes[0] && countRes[0].values[0]) {
+          beforeCount = countRes[0].values[0][0] as number;
+        }
+      } catch (err) {
+        console.error("Failed to get row count:", err);
+      }
+    }
 
-      if (!res.length) {
+    // -----------------------
+    // Prevent duplicate columns for ALTER TABLE
+    // -----------------------
+    if (command === "ALTER TABLE" && affectedTables.length > 0 && affectedColumns.length > 0) {
+      const tableName = affectedTables[0];
+      const colName = affectedColumns[0];
+
+      // Get the current columns from DB directly
+      const colRes = db.exec(`PRAGMA table_info(${tableName});`);
+      const existingCols = colRes[0]?.values.map((c: any) => c[1]) || [];
+
+      if (existingCols.includes(colName)) {
+        setFeedback(`⚠ Column "${colName}" already exists in table "${tableName}".`);
+        return;
+      }
+    }
+
+    // -----------------------
+    // Execute query
+    // -----------------------
+      // -----------------------
+      // Execute mutation query (non-SELECT only)
+      // -----------------------
+      try {
+        // Use exec instead of run for DDL and multi-line statements
+        db.exec(query);
+
+        // Immediately refresh schema
+        updateSchemaFromDB(db);
+
         setRows([]);
-        setFeedback("No results returned.");
+        setColumns([]);
+
+        // Highlight affected tables
+        if (affectedTables.length > 0) {
+          setActiveTables(new Set(affectedTables));
+        }
+
+      } catch (e: any) {
+        setRuntimeErrorCount(prev => prev + 1);
+        setError(e.message);
+        executionLock.current = false;
         return;
       }
 
-      setColumns(res[0].columns);
-      setRows(res[0].values);
+      // -----------------------
+      // Update schema - this will capture any new tables/columns
+      // -----------------------
+      updateSchemaFromDB(db);
+/*
+      // Clear previous results
+      setRows([]);
+      setColumns([]);*/
 
-      const expected = exercises[exerciseIndex].expected;
-      const correct = JSON.stringify(res[0].values) === JSON.stringify(expected);
-          if (stats) {
-      setStats(prev => {
-        if (!prev) return prev;
-
-        const updated = { ...prev };
-        const ex = updated.exercises[exerciseIndex];
-
-        const timeSpent = Math.floor(
-          (Date.now() - exerciseStartTime) / 1000
-        );
-
-        ex.attempts += 1;
-        ex.timeSpent += timeSpent;
-        updated.totalTime += timeSpent;
-
-        if (correct) {
-          ex.correctAttempts += 1;
-          if (ex.correctAttempts >= 3) {
-            ex.completed = true;
-          }
-        } else {
-          ex.errors += 1;
-          updated.totalErrors += 1;
-        }
-
-        localStorage.setItem("sqlTutorStats", JSON.stringify(updated));
-        return updated;
-      });
-
-      setExerciseStartTime(Date.now());
-    }
-      setFeedback(
-        correct
-          ? "✅ Correct!"
-          : generateHints(query, res[0].values, expected, schema).join(" • ")
-      );
-    } catch (e: any) {
-      setError(e.message);
-    }
-  };
-
-    /* =======================
-      Send Data to Google Sheets
-    ======================= */
-
-    const sendSessionData = async () => {
-      if (!stats) return;
-
-      const payload = {
-        sessionId,
-        totalTime: stats.totalTime,
-        totalErrors: stats.totalErrors,
-        exercises: stats.exercises,
-      };
-
-      try {
-        await fetch("https://script.google.com/macros/s/AKfycbzdhx6pQ1u_BUtYSHPFm0Har9kpbqYKC7t4rwLLXcNHd9C1peX9NKiOcCVo-uXdJi-vcg/exec", {
-          method: "POST",
-          body: JSON.stringify(payload),
-        });
-      } catch (err) {
-        console.error("Failed to send session data:", err);
+      // Highlight affected tables
+      if (affectedTables.length > 0) {
+        setActiveTables(new Set(affectedTables));
       }
-    };
+/*
+      // -----------------------
+      // Generic handler for any command - show affected table data
+      // -----------------------
+      if (affectedTables.length > 0) {
+        // Try to show data from the first affected table
+        const tableName = affectedTables[0];
+        
+        try {
+          // Check if table still exists (might have been dropped)
+          const tableCheck = db.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}';`);
+          if (tableCheck[0] && tableCheck[0].values.length > 0) {
+            // Get table structure
+            const tableInfo = db.exec(`PRAGMA table_info(${tableName});`);
+            if (tableInfo[0]) {
+              const columnNames = tableInfo[0].values.map((col: any) => col[1]);
+              setColumns(columnNames);
+              
+              // Fetch data from the table
+              const dataRes = db.exec(`SELECT * FROM ${tableName} LIMIT 50;`);
+              if (dataRes[0]) {
+                setRows(dataRes[0].values);
+              }
+            }
+          }
+        } catch (err) {
+          console.error(`Failed to fetch data from ${tableName}:`, err);
+        }
+      } */
 
+      // -----------------------
+      // Calculate rows affected for DML commands
+      // -----------------------
+      let rowsAffected = 0;
+      if (["INSERT", "UPDATE", "DELETE"].includes(command) && affectedTables.length > 0) {
+        try {
+          const afterCountRes = db.exec(`SELECT COUNT(*) FROM ${affectedTables[0]};`);
+          if (afterCountRes[0] && afterCountRes[0].values[0]) {
+            const afterCount = afterCountRes[0].values[0][0] as number;
+            
+            if (command === "INSERT") {
+              rowsAffected = afterCount - beforeCount;
+            } else if (command === "DELETE") {
+              rowsAffected = beforeCount - afterCount;
+            } else if (command === "UPDATE") {
+              // For UPDATE, we can't easily know how many rows were affected
+              // We'll use a different approach - execute a SELECT to count affected rows
+              try {
+                // This is a simplified approach - in reality you'd need to parse the WHERE clause
+                const whereClause = query.match(/WHERE\s+(.+?)(?:;|$)/i)?.[1] || "1=1";
+                const affectedRes = db.exec(`SELECT COUNT(*) FROM ${affectedTables[0]} WHERE ${whereClause};`);
+                if (affectedRes[0] && affectedRes[0].values[0]) {
+                  rowsAffected = affectedRes[0].values[0][0] as number;
+                }
+              } catch (err) {
+                console.error("Failed to count affected rows for UPDATE:", err);
+                rowsAffected = -1; // Unknown
+              }
+            }
+          }
+        } catch (err) {
+          console.error("Failed to calculate rows affected:", err);
+        }
+      }
+
+      // -----------------------
+      // Provide command-specific feedback
+      // -----------------------
+      if (command === "CREATE TABLE") {
+        if (affectedTables.length > 0) {
+          setFeedback(`✅ Table "${affectedTables[0]}" created successfully.`);
+        } else {
+          setFeedback(`✅ Table created successfully.`);
+        }
+      }
+      else if (command === "ALTER TABLE") {
+        if (affectedTables.length > 0 && affectedColumns.length > 0) {
+          setFeedback(`✅ Column "${affectedColumns[0]}" added to table "${affectedTables[0]}". Use INSERT/UPDATE to add data.`);
+        } else if (affectedTables.length > 0) {
+          setFeedback(`✅ Table "${affectedTables[0]}" altered successfully.`);
+        } else {
+          setFeedback(`✅ Table altered successfully.`);
+        }
+      }
+      else if (command === "DROP TABLE") {
+        if (affectedTables.length > 0) {
+          setFeedback(`✅ Table "${affectedTables[0]}" dropped successfully.`);
+          setRows([]);
+          setColumns([]);
+        }
+      }
+      else if (command === "INSERT") {
+        if (rowsAffected > 0) {
+          setFeedback(`✅ ${rowsAffected} row(s) inserted into "${affectedTables[0] || 'table'}".`);
+        } else {
+          setFeedback(`✅ INSERT executed successfully.`);
+        }
+      }
+      else if (command === "UPDATE") {
+        if (rowsAffected > 0) {
+          setFeedback(`✅ ${rowsAffected} row(s) updated in "${affectedTables[0] || 'table'}".`);
+        } else if (rowsAffected === 0) {
+          setFeedback(`✅ UPDATE executed. No rows matched the WHERE condition.`);
+        } else {
+          setFeedback(`✅ UPDATE executed successfully.`);
+        }
+      }
+      else if (command === "DELETE") {
+        if (rowsAffected > 0) {
+          setFeedback(`✅ ${rowsAffected} row(s) deleted from "${affectedTables[0] || 'table'}".`);
+        } else if (rowsAffected === 0) {
+          setFeedback(`✅ DELETE executed. No rows matched the WHERE condition.`);
+        } else {
+          setFeedback(`✅ DELETE executed successfully.`);
+        }
+      }
+      else {
+      const { hints, syntaxTips } = generateHintsWithSyntax(query, rows, [], schema, command);
+
+      setFeedback(
+        hints.length > 0 ? hints.join(" • ") : `✅ ${command} executed successfully.`
+      );
+      setSyntaxHints(syntaxTips); 
+      }
+      // ✅ Log success after all steps completed
+      setSuccessCount(prev => prev + 1);
+        
+  } catch (e: any) {
+    setError(e.message);
+        
+    setSessionLog(prev => [
+      ...prev,
+      {
+        timestamp: Date.now(),
+        query,
+        command,
+        syntaxErrors: syntaxErrs,
+        feedback,
+        hints: generateHints(query, rows, [], schema, command),
+        rowsReturned: rows.length || 0
+      }
+    ]);
+
+  } finally {
+    // ✅ Release the lock so the next real click can run
+    executionLock.current = false;
+  }
+};
   /* =======================
      UI
   ======================= */
 return (
-  <div style={{ padding: 20 }}>
-    <h1>Educational SQL Tutor</h1>
+<div
+  style={{
+    padding: 20,
+    backgroundColor: "#f3f6fb",
+    borderRadius: 12,
+    boxShadow: "0 3px 12px rgba(0,0,0,0.08)",
+    marginBottom: 20,
+    width: "100vw",       // full viewport width
+    maxWidth: "100vw",    // never shrink
+    boxSizing: "border-box" // include padding in width
+  }}
+>
+  <h1 style={{ marginBottom: 12, color: "#1976d2" }}>
+    SQLTutor <br />
+    <i style={{ fontWeight: "normal", color: "#555", fontSize: "1.2rem" }}>
+      Tutoring app prototype under construction
+    </i>
+  </h1>
 
-    {/* Exercise Buttons */}
-    {exercises.map((e, i) => (
-      <button
-        key={i}
-        onClick={() => {
-          setExerciseIndex(i);
-          setQuery(e.query);
-          setRows([]);
-          setFeedback(null);
-          setExerciseStartTime(Date.now());
-        }}
+  <p
+    style={{
+      maxWidth: 800,
+      lineHeight: 1.6,
+      color: "#333",
+      fontSize: "1rem",
+    }}
+  >
+    This tool allows you to explore SQL by selecting command categories and experimenting with live queries.
+    Instead of solving fixed exercises, you can observe how each SQL command affects the database structure and
+    results in real time.
+  </p>
+
+  {/* Optional: small call-to-action or tip */}
+  <div
+    style={{
+      marginTop: 16,
+      padding: "8px 12px",
+      backgroundColor: "#e3f2fd",
+      borderLeft: "4px solid #1976d2",
+      borderRadius: 6,
+      color: "#1976d2",
+      fontStyle: "italic",
+      maxWidth: 600,
+    }}
+  >
+    Tip: Click on a category to explore its commands in the tree!
+  </div>  
+        
+  {/* ===== Command Tree + Schema ===== */}
+  <div
+    style={{
+      display: "flex",
+      flexWrap: "nowrap",       // keep side-by-side
+      gap: 20,
+      alignItems: "flex-start",
+      marginTop: 20,
+      width: "100%",            // full width
+      overflowX: "auto",        // allow scroll on small screens
+    }}
+  >
+    {/* ===== Left: Command Tree ===== */}
+    <div
         style={{
-          marginRight: 5,
-          backgroundColor: i === exerciseIndex ? "#4caf50" : "#ccc",
-          color: i === exerciseIndex ? "white" : "black",
+          flex: 1,               // take equal space
+          display: "flex",
+          flexDirection: "column",
+          gap: 16,
+          minWidth: 300,         // optional: prevent being too narrow
         }}
       >
-        {e.label}
-      </button>
-    ))}
+      {/* Command Tree Title */}
+      <h2 style={{ marginBottom: 12 }}>Command Categories</h2>
 
-        {/* ===== Progress Bars ===== */}
-    {stats && (
-      <div style={{ marginTop: 15, marginBottom: 20 }}>
-        {exercises.map((_, i) => {
-          const ex = stats.exercises[i];
-          if (!ex) return null;
+      {Object.entries(sqlCommandTree).map(([category, data]) => (
+        <div key={category}>
+          {/* Category Button */}
+          <button
+            onClick={() =>
+              setSelectedCategory(selectedCategory === category ? null : category)
+            }
+            style={{
+              fontWeight: data.commands.length === 0 ? "normal" : "bold",
+              color: data.commands.length === 0 ? "#888" : "#1976d2",
+              cursor: "pointer",
+              padding: "10px 16px",
+              borderRadius: 8,
+              border: "2px solid #1976d2",
+              backgroundColor:
+                selectedCategory === category ? "#e3f2fd" : "#f5f5f5",
+              transition: "all 0.3s",
+              width: "100%",
+              textAlign: "left",
+            }}
+            onMouseEnter={e => (e.currentTarget.style.backgroundColor = "#bbdefb")}
+            onMouseLeave={e =>
+              (e.currentTarget.style.backgroundColor =
+                selectedCategory === category ? "#e3f2fd" : "#f5f5f5")
+            }
+          >
+            {category} — {data.description}
+          </button>
 
-          const percent = Math.min((ex.correctAttempts / 3) * 100, 100);
-
-          return (
-            <div key={i} style={{ marginBottom: 10 }}>
-              <div style={{ fontSize: 12 }}>
-                {ex.correctAttempts}/3 Mastery Attempts
-              </div>
-
-              <div
-                style={{
-                  height: 8,
-                  backgroundColor: "#ddd",
-                  borderRadius: 4,
-                  overflow: "hidden",
-                }}
-              >
+          {/* Commands Grid */}
+          {selectedCategory === category && (
+            <div
+              style={{
+                marginTop: 8,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
+                gap: 8,
+              }}
+            >
+              {data.commands.length > 0 ? (
+                data.commands.map(cmd => (
+                  <button
+                    key={cmd}
+                    onClick={() => loadCommand(cmd)}
+                    style={{
+                      padding: "6px 12px",
+                      borderRadius: 6,
+                      border: "1px solid #1976d2",
+                      backgroundColor:
+                        selectedCommand === cmd ? "#1976d2" : "#e3f2fd",
+                      color: selectedCommand === cmd ? "white" : "#1976d2",
+                      cursor: "pointer",
+                      transition: "all 0.2s",
+                    }}
+                    onMouseEnter={e =>
+                      (e.currentTarget.style.backgroundColor =
+                        selectedCommand === cmd ? "#1565c0" : "#bbdefb")
+                    }
+                    onMouseLeave={e =>
+                      (e.currentTarget.style.backgroundColor =
+                        selectedCommand === cmd ? "#1976d2" : "#e3f2fd")
+                    }
+                  >
+                    {cmd}
+                  </button>
+                ))
+              ) : (
                 <div
                   style={{
-                    width: `${percent}%`,
-                    height: "100%",
-                    backgroundColor: ex.completed ? "green" : "#4caf50",
-                    transition: "width 0.3s ease",
+                    color: "#888",
+                    fontStyle: "italic",
+                    gridColumn: "1 / -1",
+                    textAlign: "center",
+                    padding: "4px 0",
                   }}
-                />
-              </div>
+                >
+                  Future Work — No commands yet
+                </div>
+              )}
             </div>
-          );
-        })}
-      </div>
-    )}
+          )}
+        </div>
+      ))}
+    </div>
 
-    {/* Editor */}
-    <Editor
-      height="220px"
-      language="sql"
-      value={query}
-      onChange={(v) => setQuery(v || "")}
-    />
-
-    {/* Syntax warnings (real-time) */}
-    {syntaxErrors.map((e, i) => (
-      <p key={i} style={{ color: "orange", margin: "4px 0" }}>
-        ⚠ {e}
-      </p>
-    ))}
-
-    {/* Semantic / Debugging feedback (real-time & post-run) */}
-    {feedback && (
-      <p style={{ color: "blue", marginTop: 6 }}>
-        💡 {feedback}
-      </p>
-    )}
-
-    <button disabled={syntaxErrors.length > 0} onClick={runQuery}>
-      Run Query
-    </button>
-
-    {error && <p style={{ color: "red" }}>{error}</p>}
-
-    {/* Schema Cards */}
-    <div style={{ position: "relative", marginTop: 20 }}>
-      <h2>Database Schema</h2>
-      <div
+    {/* ===== Right: Schema Cards ===== */}
+    <div
         style={{
-          display: "flex",
-          gap: 20,
-          flexWrap: "wrap",
+          flex: 1,               // take equal space as tree
+          maxHeight: "80vh",
+          overflowY: "auto",
+          paddingRight: 10,
+          minWidth: 300,         // optional
         }}
       >
-        {schema.map((t: any) => (
+      <h2>Database Schema</h2>
+      <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
+        {schema.map(t => (
           <div
             key={t.table}
             ref={t.ref}
@@ -515,25 +1188,21 @@ return (
               borderRadius: 8,
               padding: 12,
               minWidth: 220,
-              transition: "border-color 0.2s, background-color 0.2s",
-
-              backgroundColor: activeTables.has(t.table)
-                ? "#fff3cd"
-                : "#fafafa",
-
+              backgroundColor: activeTables.has(t.table) ? "#fff3cd" : "#fafafa",
               borderColor:
                 hoveredTable === t.table
                   ? "#ff9800"
                   : activeTables.has(t.table)
                   ? "#ffb300"
                   : "#333",
+              transition: "all 0.2s",
+              boxShadow:
+                hoveredTable === t.table ? "0 4px 12px rgba(0,0,0,0.1)" : "",
             }}
           >
             <h3 style={{ marginTop: 0 }}>{t.table}</h3>
             {t.pk && (
-              <div style={{ color: "green", fontWeight: "bold" }}>
-                PK: {t.pk}
-              </div>
+              <div style={{ color: "green", fontWeight: "bold" }}>PK: {t.pk}</div>
             )}
             {t.fk && t.fk.length > 0 && (
               <div style={{ color: "blue", fontWeight: "bold" }}>
@@ -541,7 +1210,7 @@ return (
               </div>
             )}
             <ul style={{ paddingLeft: 18 }}>
-              {t.columns.map((col: string) => (
+              {t.columns.map(col => (
                 <li key={col}>{col}</li>
               ))}
             </ul>
@@ -549,38 +1218,34 @@ return (
         ))}
       </div>
 
-      {/* FK lines */}
+      {/* ===== FK lines ===== */}
       <svg
         style={{
           position: "absolute",
           top: 0,
           left: 0,
           width: "100%",
-          height: "100%",
+          height: "500px",
           pointerEvents: "none",
         }}
       >
-        {schema.map((t: any) =>
-          t.fk?.map((fkCol: string) => {
-            const targetTable = schema.find((tbl: any) => tbl.pk === fkCol);
+        {schema.map(t =>
+          t.fk?.map(fkCol => {
+            const targetTable = schema.find(tbl => tbl.pk === fkCol);
             if (!t.ref?.current || !targetTable?.ref?.current) return null;
 
             const tRect = t.ref.current.getBoundingClientRect();
             const targetRect = targetTable.ref.current.getBoundingClientRect();
-            const parentRect =
-              t.ref.current.parentElement?.getBoundingClientRect();
+            const parentRect = t.ref.current.parentElement?.getBoundingClientRect();
             if (!parentRect) return null;
 
             const x1 = tRect.left + tRect.width / 2 - parentRect.left;
             const y1 = tRect.top + tRect.height / 2 - parentRect.top;
-            const x2 =
-              targetRect.left + targetRect.width / 2 - parentRect.left;
-            const y2 =
-              targetRect.top + targetRect.height / 2 - parentRect.top;
+            const x2 = targetRect.left + targetRect.width / 2 - parentRect.left;
+            const y2 = targetRect.top + targetRect.height / 2 - parentRect.top;
 
             const isActive =
-              activeTables.has(t.table) &&
-              activeTables.has(targetTable.table);
+              activeTables.has(t.table) && activeTables.has(targetTable.table);
 
             return (
               <line
@@ -592,8 +1257,7 @@ return (
                 stroke={
                   isActive
                     ? "red"
-                    : hoveredTable === t.table ||
-                      hoveredTable === targetTable.table
+                    : hoveredTable === t.table || hoveredTable === targetTable.table
                     ? "orange"
                     : "#ccc"
                 }
@@ -604,141 +1268,281 @@ return (
         )}
       </svg>
     </div>
-    <div style={{ padding: 12 }}>
-      {/* ===== Horizontal Container ===== */}
+  </div>
+
+    {/* ===== Editor + Results Below Tree + Schema ===== */}
+    <div
+      style={{
+        marginTop: 20,
+        display: "flex",
+        flexDirection: "column",
+        gap: 12,
+        width: "100%",
+        minHeight: "100vh",
+        boxSizing: "border-box",
+        overflowY: "auto",
+      }}
+    >
+    {/* ===== Editor + Run Button Row ===== */}
+    <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
+      {/* Editor */}
       <div
         style={{
-          display: "flex",
-          flexDirection: "row", // horizontal layout
-          gap: 20,
-          flexWrap: "wrap",     // responsive
+          flex: 1,
+          borderRadius: 8,
+          overflow: "hidden",
+          border: "1px solid #1976d2",
+          backgroundColor: "#f5f7fa",
+          boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
         }}
       >
-        {/* ===== Query Breakdown ===== */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 200,
-            padding: 12,
-            backgroundColor: "#fafafa",
-            borderRadius: 8,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
+        <Editor
+          height="220px"
+          language="sql"
+          value={query}
+          onChange={v => setQuery(v || "")}
+          options={{
+            minimap: { enabled: false },
+            fontSize: 14,
+            lineHeight: 20,
           }}
-        >
-          <h2>Query Breakdown</h2>
-          {Object.entries(queryParts).map(([k, v]: any) => (
-            <p key={k}>
-              <b>{k}</b>: {Array.isArray(v) ? v.join(" | ") : v}
-            </p>
-          ))}
-        </div>
+        />
+      </div>
 
-        {/* ===== Execution Steps ===== */}
-        <div
-          style={{
-            flex: 1,
-            minWidth: 200,
-            padding: 12,
-            backgroundColor: "#fafafa",
-            borderRadius: 8,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-          }}
-        >
-          <h3>Execution Steps</h3>
-          {executionSteps.length === 0 && <p>No steps yet. Run a query.</p>}
-          {executionSteps.length > 0 && (
-            <ol>
-              {executionSteps.map((s, i) => (
-                <li
-                  key={i}
-                  style={{
-                    color: i === currentStep ? "green" : "black",
-                    fontWeight: i === currentStep ? "bold" : "normal",
-                  }}
-                >
-                  {s}
-                </li>
-              ))}
-            </ol>
-          )}
-        </div>
+      {/* Run Query Button */}
+      <button
+        disabled={syntaxErrors.length > 0}
+        onClick={handleRun}
+        style={{
+          padding: "10px 16px",
+          borderRadius: 8,
+          border: "2px solid #1976d2",
+          backgroundColor: syntaxErrors.length > 0 ? "#e0e0e0" : "#e3f2fd",
+          color: syntaxErrors.length > 0 ? "#888" : "#1976d2",
+          cursor: syntaxErrors.length > 0 ? "not-allowed" : "pointer",
+          fontWeight: "bold",
+          transition: "all 0.3s",
+          height: "42px",
+          alignSelf: "flex-start",
+        }}
+        onMouseEnter={e => {
+          if (syntaxErrors.length === 0) e.currentTarget.style.backgroundColor = "#bbdefb";
+        }}
+        onMouseLeave={e => {
+          if (syntaxErrors.length === 0) e.currentTarget.style.backgroundColor = "#e3f2fd";
+        }}
+      >
+        Run Query
+      </button>
+    </div>
+    {/* ===== Command Syntax Hint Panel ===== */}
+    {selectedCommand && (
+      <div
+        style={{
+          marginTop: 12,
+          padding: "12px 16px",
+          backgroundColor: "#f0f4f8",
+          borderLeft: "4px solid #1976d2",
+          borderRadius: 6,
+          fontFamily: "monospace",
+          color: "#1976d2",
+          whiteSpace: "pre-wrap",
+          overflowX: "auto",
+          maxWidth: "100%",
+        }}
+      >
+        <strong>Syntax Hint:</strong>
+        <pre style={{ margin: 0 }}>{commandTemplates[selectedCommand]}</pre>
+      </div>
+    )}
 
-        {/* ===== Results Table ===== */}
-        <div
+    {/* Syntax Warnings */}
+    {syntaxErrors.map((e, i) => (
+      <p key={i} style={{ color: "orange", margin: "4px 0" }}>
+        ⚠ {e}
+      </p>
+    ))}
+    
+  {/* Feedback + Error + Animated Syntax Tips Panel */}
+  {(feedback || error || syntaxHints.length > 0) && (
+    <div
+      style={{
+        marginTop: 6,
+        padding: "12px 16px",
+        backgroundColor: "#f0f4f8",
+        borderLeft: "4px solid #1976d2",
+        borderRadius: 6,
+        fontFamily: "monospace",
+        whiteSpace: "pre-wrap",
+        overflowX: "auto",
+      }}
+    >
+      {/* Feedback / Error Message */}
+      {(feedback || error) && (
+        <p
           style={{
-            flex: 1,
-            minWidth: 200,
-            padding: 12,
-            backgroundColor: "#fafafa",
-            borderRadius: 8,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.1)",
-            overflowX: "auto", // scroll for wide tables
+            margin: 0,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            color: error
+              ? "#d32f2f"
+              : syntaxErrors.length > 0
+              ? "#f57c00"
+              : "#1976d2",
+            fontWeight: 500,
           }}
         >
-          <h3>Results</h3>
-          {rows.length === 0 && <p>No results yet.</p>}
-          {rows.length > 0 && (
-            <table
-              border={1}
+          {error ? "❌" : syntaxErrors.length > 0 ? "⚠" : "✅"}
+          {error || feedback}
+        </p>
+      )}
+
+      {/* Animated Syntax Tips */}
+      {syntaxHints.length > 0 && (
+        <ul style={{ marginTop: 4, paddingLeft: 20, color: "#388e3c" }}>
+          {syntaxHints.map((tip, i) => (
+            <li
+              key={i}
               style={{
-                marginTop: 10,
-                width: "100%",
-                borderCollapse: "collapse",
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                opacity: 0,
+                animation: `fadeInTip 0.4s ease forwards`,
+                animationDelay: `${i * 0.3}s`,
               }}
             >
-              <thead>
-                <tr>
-                  {columns.map((c) => (
-                    <th
-                      key={c}
-                      style={{
-                        padding: "4px 8px",
-                        textAlign: "left",
-                        backgroundColor: "#e0e0e0",
-                      }}
-                    >
-                      {c}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {rows.map((r, i) => (
-                  <tr key={i}>
-                    {r.map((c: any, j: number) => (
-                      <td key={j} style={{ padding: "4px 8px" }}>
-                        {c}
-                      </td>
-                    ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-      </div>
+              💡 {tip}
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
+  )}
 
-      {/* ===== Feedback Button ===== */}
-      <div style={{ marginTop: 20 }}>
-        <button
-          onClick={async () => {
-            await sendSessionData();
-            setShowSurvey(true);
-          }}
-          
-          style={{
-            padding: "10px 16px",
-            fontSize: 16,
-            backgroundColor: "#1976d2",
-            color: "white",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
-          }}
-        >
-          📋 Give Feedback on This Tutor
-        </button>
-      </div>
+    {/* Scoped CSS for animation */}
+    <style>{`
+      @keyframes fadeInTip {
+        to {
+          opacity: 1;
+        }
+      }
+    `}</style>
+
+    {/* ===== Execution Steps Animation ===== */}
+    {executionSteps.length > 0 && currentStep >= 0 && currentStep < executionSteps.length && (
+      <p style={{ fontStyle: "italic", color: "#555" }}>
+        🔹 Step {currentStep + 1}/{executionSteps.length}: {executionSteps[currentStep]}
+      </p>
+    )}
+
+      {/* ===== Results Table ===== */}
+  <div
+    style={{
+      marginTop: 20,
+      padding: 16,
+      backgroundColor: "#f5f7fa",
+      borderRadius: 12,
+      boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+      overflowX: "auto",
+    }}
+  >
+    <h3 style={{ marginBottom: 12, color: "#1976d2" }}>Results</h3>
+
+    {rows.length === 0 && <p style={{ color: "#555" }}>No results yet.</p>}
+
+    {rows.length > 0 && (
+      <table
+        style={{
+          width: "100%",
+          borderCollapse: "separate",
+          borderSpacing: "0 6px",
+        }}
+      >
+        <thead>
+          <tr>
+            {columns.map(c => (
+              <th
+                key={c}
+                style={{
+                  padding: "8px 12px",
+                  textAlign: "left",
+                  backgroundColor: "#e3f2fd",
+                  borderRadius: "8px 8px 0 0",
+                  color: "#1976d2",
+                }}
+              >
+                {c}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r, i) => (
+            <tr
+              key={i}
+              style={{
+                backgroundColor: i % 2 === 0 ? "#ffffff" : "#f0f4f8",
+                transition: "background-color 0.2s",
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = "#dceefb")}
+              onMouseLeave={e =>
+                (e.currentTarget.style.backgroundColor = i % 2 === 0 ? "#ffffff" : "#f0f4f8")
+              }
+            >
+              {r.map((c, j) => (
+                <td
+                  key={j}
+                  style={{
+                    padding: "8px 12px",
+                    borderBottom: "1px solid #e0e0e0",
+                  }}
+                >
+                  {c}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    )}
+  </div>
+</div>
+
+    {/* ===== Feedback Button ===== */}
+    <div style={{ marginTop: 20 }}>
+      <button
+        onClick={async () => {
+          try {
+            // 1️⃣ Export session logs invisibly
+            await exportSessionToGoogleForm();
+
+            // 2️⃣ Open survey with only session ID prefilled
+            const surveyUrl = `https://docs.google.com/forms/d/e/1FAIpQLSew607JecHfhQmGcrs-G8lxix8HGnZneUCDzMjeKfRaqOueEA/viewform?usp=pp_url&entry.1662198417=${sessionId}`;
+            window.open(surveyUrl, "_blank");
+          } catch (err) {
+            console.error("Failed to log session or open survey:", err);
+            // fallback: still open survey even if logging fails
+            window.open(
+              "https://docs.google.com/forms/d/e/1FAIpQLSew607JecHfhQmGcrs-G8lxix8HGnZneUCDzMjeKfRaqOueEA/viewform",
+              "_blank"
+            );
+          }
+        }}
+        style={{
+          padding: "10px 16px",
+          fontSize: 16,
+          backgroundColor: "#1976d2",
+          color: "white",
+          border: "none",
+          borderRadius: 6,
+          cursor: "pointer",
+        }}
+      >
+        📋 Give Feedback on This Tutor
+      </button>
+    </div>
 
       {/* ===== Survey Modal ===== */}
       {showSurvey && (
@@ -786,19 +1590,19 @@ return (
               ✖
             </button>
 
-            {/* Survey Header */}
             <h2 style={{ marginTop: 0 }}>Evaluation Survey</h2>
             <p>
               Your feedback helps improve this SQL learning tool. This survey takes
               less than 2 minutes.
             </p>
 
-            {/* Embedded Google Form */}
-            <p style={{ fontWeight: "bold", marginBottom: 10 }}> Please copy this Session ID into the first question of the survey: <br />
-            {sessionId} </p>
+            <p style={{ fontWeight: "bold", marginBottom: 10 }}>
+              Please copy this Session ID into the first question of the survey: <br />
+              {sessionId}
+            </p>
 
             <iframe
-              src="https://docs.google.com/forms/d/e/1FAIpQLSew607JecHfhQmGcrs-G8lxix8HGnZneUCDzMjeKfRaqOueEA/viewform?embedded=true"
+              src={`https://docs.google.com/forms/d/e/1FAIpQLSew607JecHfhQmGcrs-G8lxix8HGnZneUCDzMjeKfRaqOueEA/viewform?usp=pp_url&entry.1551736835=${sessionId}&embedded=true`}
               width="100%"
               height="500"
               frameBorder="0"
@@ -810,9 +1614,10 @@ return (
           </div>
         </div>
       )}
+      
     </div>
-  </div>  
+  
   );
-}
 
+}
 export default App;
