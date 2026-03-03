@@ -622,7 +622,6 @@ const exportSessionToGoogleForm = async () => {
       Run Query
     ======================= */
     
-
 const runQuery = async () => {
   // 🚫 Ignore React StrictMode replay
   if (executionLock.current) return;
@@ -639,16 +638,16 @@ const runQuery = async () => {
   setError(null);
   setFeedback(null);
 
-    const upper = query.trim().toUpperCase();
+  const upper = query.trim().toUpperCase();
 
-    let command = "";
-    if (upper.startsWith("CREATE TABLE")) command = "CREATE TABLE";
-    else if (upper.startsWith("ALTER TABLE")) command = "ALTER TABLE";
-    else if (upper.startsWith("DROP TABLE")) command = "DROP TABLE";
-    else if (upper.startsWith("INSERT")) command = "INSERT";
-    else if (upper.startsWith("UPDATE")) command = "UPDATE";
-    else if (upper.startsWith("DELETE")) command = "DELETE";
-    else if (upper.startsWith("SELECT")) command = "SELECT";
+  let command = "";
+  if (upper.startsWith("CREATE TABLE")) command = "CREATE TABLE";
+  else if (upper.startsWith("ALTER TABLE")) command = "ALTER TABLE";
+  else if (upper.startsWith("DROP TABLE")) command = "DROP TABLE";
+  else if (upper.startsWith("INSERT")) command = "INSERT";
+  else if (upper.startsWith("UPDATE")) command = "UPDATE";
+  else if (upper.startsWith("DELETE")) command = "DELETE";
+  else if (upper.startsWith("SELECT")) command = "SELECT";
 
   // -----------------------
   // Validate syntax
@@ -657,21 +656,17 @@ const runQuery = async () => {
   setSyntaxErrors(syntaxErrs);
   if (syntaxErrs.length > 0) {
     setSyntaxErrorCount(prev => prev + 1);
-    
     setFeedback("⚠ Fix syntax errors before running the query.");
     executionLock.current = false;
     return;
   }
-  
-  // 👇 THIS is what you use now
+
   const { tables: affectedTables, columns: affectedColumns } =
     parseAffectedTablesAndColumns(query, command);
 
   // -----------------------
   // Table/column existence checks
   // -----------------------
-
-  // CREATE TABLE
   if (command === "CREATE TABLE" && affectedTables.length > 0) {
     const tableName = affectedTables[0];
     const tableExistsRes = db.exec(
@@ -684,7 +679,6 @@ const runQuery = async () => {
     }
   }
 
-  // ALTER TABLE
   if (command === "ALTER TABLE" && affectedTables.length > 0 && affectedColumns.length > 0) {
     const tableName = affectedTables[0];
     const colName = affectedColumns[0];
@@ -698,7 +692,6 @@ const runQuery = async () => {
     }
   }
 
-  // DROP TABLE
   if (command === "DROP TABLE" && affectedTables.length > 0) {
     const tableName = affectedTables[0];
     const tableExistsRes = db.exec(
@@ -711,7 +704,6 @@ const runQuery = async () => {
     }
   }
 
-  // INSERT / UPDATE / DELETE table check
   if (["INSERT", "UPDATE", "DELETE"].includes(command) && affectedTables.length > 0) {
     const tableName = affectedTables[0];
     const tableExistsRes = db.exec(
@@ -724,13 +716,11 @@ const runQuery = async () => {
     }
   }
 
-  // INSERT column check
   if (command === "INSERT" && affectedTables.length > 0 && affectedColumns.length > 0) {
     const tableName = affectedTables[0];
     const colRes = db.exec(`PRAGMA table_info(${tableName});`);
     const existingCols: string[] = colRes[0]?.values.map((c: any) => c[1]) || [];
     const invalidCols: string[] = affectedColumns.filter((c: string) => !existingCols.includes(c));
-
     if (invalidCols.length > 0) {
       setFeedback(`⚠ Column(s) ${invalidCols.join(", ")} do not exist in table "${tableName}".`);
       executionLock.current = false;
@@ -738,13 +728,11 @@ const runQuery = async () => {
     }
   }
 
-  // UPDATE column check
   if (command === "UPDATE" && affectedTables.length > 0 && affectedColumns.length > 0) {
     const tableName = affectedTables[0];
     const colRes = db.exec(`PRAGMA table_info(${tableName});`);
     const existingCols: string[] = colRes[0]?.values.map((c: any) => c[1]) || [];
     const invalidCols: string[] = affectedColumns.filter((c: string) => !existingCols.includes(c));
-
     if (invalidCols.length > 0) {
       setFeedback(`⚠ Column(s) ${invalidCols.join(", ")} do not exist in table "${tableName}".`);
       executionLock.current = false;
@@ -752,7 +740,6 @@ const runQuery = async () => {
     }
   }
 
-  // SELECT tables exist check
   if (command === "SELECT" && affectedTables.length > 0) {
     const missingTables: string[] = affectedTables.filter(
       (t: string) =>
@@ -803,11 +790,8 @@ const runQuery = async () => {
     if (command === "ALTER TABLE" && affectedTables.length > 0 && affectedColumns.length > 0) {
       const tableName = affectedTables[0];
       const colName = affectedColumns[0];
-
-      // Get the current columns from DB directly
       const colRes = db.exec(`PRAGMA table_info(${tableName});`);
       const existingCols = colRes[0]?.values.map((c: any) => c[1]) || [];
-
       if (existingCols.includes(colName)) {
         setFeedback(`⚠ Column "${colName}" already exists in table "${tableName}".`);
         return;
@@ -817,174 +801,99 @@ const runQuery = async () => {
     // -----------------------
     // Execute query
     // -----------------------
-      // -----------------------
-      // Execute mutation query (non-SELECT only)
-      // -----------------------
-      try {
-        // Use exec instead of run for DDL and multi-line statements
-        db.exec(query);
-
-        // Immediately refresh schema
-        updateSchemaFromDB(db);
-
-        setRows([]);
-        setColumns([]);
-
-        // Highlight affected tables
-        if (affectedTables.length > 0) {
-          setActiveTables(new Set(affectedTables));
-        }
-
-      } catch (e: any) {
-        setRuntimeErrorCount(prev => prev + 1);
-        setError(e.message);
-        executionLock.current = false;
-        return;
-      }
-
-      // -----------------------
-      // Update schema - this will capture any new tables/columns
-      // -----------------------
+    try {
+      db.exec(query); // Execute DDL/DML
       updateSchemaFromDB(db);
-/*
-      // Clear previous results
-      setRows([]);
-      setColumns([]);*/
 
       // Highlight affected tables
       if (affectedTables.length > 0) {
-        setActiveTables(new Set(affectedTables));
-      }
-/*
-      // -----------------------
-      // Generic handler for any command - show affected table data
-      // -----------------------
-      if (affectedTables.length > 0) {
-        // Try to show data from the first affected table
         const tableName = affectedTables[0];
-        
+        setActiveTables(new Set(affectedTables));
+
         try {
-          // Check if table still exists (might have been dropped)
-          const tableCheck = db.exec(`SELECT name FROM sqlite_master WHERE type='table' AND name='${tableName}';`);
-          if (tableCheck[0] && tableCheck[0].values.length > 0) {
-            // Get table structure
-            const tableInfo = db.exec(`PRAGMA table_info(${tableName});`);
-            if (tableInfo[0]) {
-              const columnNames = tableInfo[0].values.map((col: any) => col[1]);
-              setColumns(columnNames);
-              
-              // Fetch data from the table
-              const dataRes = db.exec(`SELECT * FROM ${tableName} LIMIT 50;`);
-              if (dataRes[0]) {
-                setRows(dataRes[0].values);
-              }
-            }
-          }
+          // Always get columns first
+          const tableInfo = db.exec(`PRAGMA table_info(${tableName});`);
+          const columnNames = tableInfo[0]?.values.map((col: any) => col[1]) || [];
+          setColumns(columnNames);
+
+          // Fetch rows; empty array if none
+          const dataRes = db.exec(`SELECT * FROM ${tableName} LIMIT 50;`);
+          setRows(dataRes?.[0]?.values || []);
         } catch (err) {
           console.error(`Failed to fetch data from ${tableName}:`, err);
+          setColumns([]);
+          setRows([]);
         }
-      } */
+      }
+    } catch (e: any) {
+      setRuntimeErrorCount(prev => prev + 1);
+      setError(e.message);
+      executionLock.current = false;
+      return;
+    }
 
-      // -----------------------
-      // Calculate rows affected for DML commands
-      // -----------------------
-      let rowsAffected = 0;
-      if (["INSERT", "UPDATE", "DELETE"].includes(command) && affectedTables.length > 0) {
-        try {
-          const afterCountRes = db.exec(`SELECT COUNT(*) FROM ${affectedTables[0]};`);
-          if (afterCountRes[0] && afterCountRes[0].values[0]) {
-            const afterCount = afterCountRes[0].values[0][0] as number;
-            
-            if (command === "INSERT") {
-              rowsAffected = afterCount - beforeCount;
-            } else if (command === "DELETE") {
-              rowsAffected = beforeCount - afterCount;
-            } else if (command === "UPDATE") {
-              // For UPDATE, we can't easily know how many rows were affected
-              // We'll use a different approach - execute a SELECT to count affected rows
-              try {
-                // This is a simplified approach - in reality you'd need to parse the WHERE clause
-                const whereClause = query.match(/WHERE\s+(.+?)(?:;|$)/i)?.[1] || "1=1";
-                const affectedRes = db.exec(`SELECT COUNT(*) FROM ${affectedTables[0]} WHERE ${whereClause};`);
-                if (affectedRes[0] && affectedRes[0].values[0]) {
-                  rowsAffected = affectedRes[0].values[0][0] as number;
-                }
-              } catch (err) {
-                console.error("Failed to count affected rows for UPDATE:", err);
-                rowsAffected = -1; // Unknown
+    // -----------------------
+    // Calculate rows affected for DML commands
+    // -----------------------
+    let rowsAffected = 0;
+    if (["INSERT", "UPDATE", "DELETE"].includes(command) && affectedTables.length > 0) {
+      try {
+        const afterCountRes = db.exec(`SELECT COUNT(*) FROM ${affectedTables[0]};`);
+        if (afterCountRes[0] && afterCountRes[0].values[0]) {
+          const afterCount = afterCountRes[0].values[0][0] as number;
+
+          if (command === "INSERT") {
+            rowsAffected = afterCount - beforeCount;
+          } else if (command === "DELETE") {
+            rowsAffected = beforeCount - afterCount;
+          } else if (command === "UPDATE") {
+            try {
+              const whereClause = query.match(/WHERE\s+(.+?)(?:;|$)/i)?.[1] || "1=1";
+              const affectedRes = db.exec(`SELECT COUNT(*) FROM ${affectedTables[0]} WHERE ${whereClause};`);
+              if (affectedRes[0] && affectedRes[0].values[0]) {
+                rowsAffected = affectedRes[0].values[0][0] as number;
               }
+            } catch (err) {
+              console.error("Failed to count affected rows for UPDATE:", err);
+              rowsAffected = -1;
             }
           }
-        } catch (err) {
-          console.error("Failed to calculate rows affected:", err);
         }
+      } catch (err) {
+        console.error("Failed to calculate rows affected:", err);
       }
+    }
 
-      // -----------------------
-      // Provide command-specific feedback
-      // -----------------------
-      if (command === "CREATE TABLE") {
-        if (affectedTables.length > 0) {
-          setFeedback(`✅ Table "${affectedTables[0]}" created successfully.`);
-        } else {
-          setFeedback(`✅ Table created successfully.`);
-        }
-      }
-      else if (command === "ALTER TABLE") {
-        if (affectedTables.length > 0 && affectedColumns.length > 0) {
-          setFeedback(`✅ Column "${affectedColumns[0]}" added to table "${affectedTables[0]}". Use INSERT/UPDATE to add data.`);
-        } else if (affectedTables.length > 0) {
-          setFeedback(`✅ Table "${affectedTables[0]}" altered successfully.`);
-        } else {
-          setFeedback(`✅ Table altered successfully.`);
-        }
-      }
-      else if (command === "DROP TABLE") {
-        if (affectedTables.length > 0) {
-          setFeedback(`✅ Table "${affectedTables[0]}" dropped successfully.`);
-          setRows([]);
-          setColumns([]);
-        }
-      }
-      else if (command === "INSERT") {
-        if (rowsAffected > 0) {
-          setFeedback(`✅ ${rowsAffected} row(s) inserted into "${affectedTables[0] || 'table'}".`);
-        } else {
-          setFeedback(`✅ INSERT executed successfully.`);
-        }
-      }
-      else if (command === "UPDATE") {
-        if (rowsAffected > 0) {
-          setFeedback(`✅ ${rowsAffected} row(s) updated in "${affectedTables[0] || 'table'}".`);
-        } else if (rowsAffected === 0) {
-          setFeedback(`✅ UPDATE executed. No rows matched the WHERE condition.`);
-        } else {
-          setFeedback(`✅ UPDATE executed successfully.`);
-        }
-      }
-      else if (command === "DELETE") {
-        if (rowsAffected > 0) {
-          setFeedback(`✅ ${rowsAffected} row(s) deleted from "${affectedTables[0] || 'table'}".`);
-        } else if (rowsAffected === 0) {
-          setFeedback(`✅ DELETE executed. No rows matched the WHERE condition.`);
-        } else {
-          setFeedback(`✅ DELETE executed successfully.`);
-        }
-      }
-      else {
+    // -----------------------
+    // Command-specific feedback
+    // -----------------------
+    if (command === "CREATE TABLE") {
+      setFeedback(`✅ Table "${affectedTables[0] || ''}" created successfully but needs populating it to see fully.`);
+    } else if (command === "ALTER TABLE") {
+      setFeedback(`✅ Column "${affectedColumns[0] || ''}" added to table "${affectedTables[0] || ''}". Use INSERT/UPDATE to add data.`);
+    } else if (command === "DROP TABLE") {
+      setFeedback(`✅ Table "${affectedTables[0] || ''}" dropped successfully.`);
+    } else if (command === "INSERT") {
+      setFeedback(`✅ ${rowsAffected} row(s) inserted into "${affectedTables[0] || 'table'}".`);
+    } else if (command === "UPDATE") {
+      setFeedback(rowsAffected > 0
+        ? `✅ ${rowsAffected} row(s) updated in "${affectedTables[0] || 'table'}".`
+        : `✅ UPDATE executed. No rows matched the WHERE condition.`);
+    } else if (command === "DELETE") {
+      setFeedback(rowsAffected > 0
+        ? `✅ ${rowsAffected} row(s) deleted from "${affectedTables[0] || 'table'}".`
+        : `✅ DELETE executed. No rows matched the WHERE condition.`);
+    } else {
       const { hints, syntaxTips } = generateHintsWithSyntax(query, rows, [], schema, command);
+      setFeedback(hints.length > 0 ? hints.join(" • ") : `✅ ${command} executed successfully.`);
+      setSyntaxHints(syntaxTips);
+    }
 
-      setFeedback(
-        hints.length > 0 ? hints.join(" • ") : `✅ ${command} executed successfully.`
-      );
-      setSyntaxHints(syntaxTips); 
-      }
-      // ✅ Log success after all steps completed
-      setSuccessCount(prev => prev + 1);
-        
+    setSuccessCount(prev => prev + 1);
+
   } catch (e: any) {
     setError(e.message);
-        
+
     setSessionLog(prev => [
       ...prev,
       {
@@ -999,7 +908,6 @@ const runQuery = async () => {
     ]);
 
   } finally {
-    // ✅ Release the lock so the next real click can run
     executionLock.current = false;
   }
 };
@@ -1019,42 +927,46 @@ return (
     boxSizing: "border-box" // include padding in width
   }}
 >
-  <h1 style={{ marginBottom: 12, color: "#1976d2" }}>
-    SQLTutor <br />
-    <i style={{ fontWeight: "normal", color: "#555", fontSize: "1.2rem" }}>
-      Tutoring app prototype under construction
-    </i>
-  </h1>
-
-  <p
+  <div
     style={{
-      maxWidth: 800,
-      lineHeight: 1.6,
-      color: "#333",
-      fontSize: "1rem",
+      background: "linear-gradient(135deg, #1976d2, #4b0082)", // blue to indigo
+      color: "white",
+      padding: "20px 20px",
+      borderRadius: "0 0 30px 30px",
+      textAlign: "center",
+      maxWidth: "900px",
+      margin: "0 auto",
+      boxShadow: "0 10px 25px rgba(0,0,0,0.2)"
     }}
   >
-    This tool allows you to explore SQL by selecting command categories and experimenting with live queries.
-    Instead of solving fixed exercises, you can observe how each SQL command affects the database structure and
-    results in real time.
-  </p>
+    <h1 style={{ fontSize: "3rem", marginBottom: "12px", fontWeight: "bold" }}>
+      SQLTutor
+    </h1>
+    <p style={{ fontSize: "1.2rem", fontWeight: "normal", opacity: 0.9, marginBottom: "24px" }}>
+      / Tutoring app-prototype under construction /
+    </p>
+    <p style={{ fontSize: "1rem", lineHeight: 1.6, opacity: 0.85 }}>
+      This tool allows you to explore SQL by selecting command categories and experimenting with live queries. 
+      Instead of solving fixed exercises, you can observe how each SQL command affects the database structure and results in real time.
+    </p>
+  </div>
 
   {/* Optional: small call-to-action or tip */}
   <div
     style={{
-      marginTop: 16,
-      padding: "8px 12px",
-      backgroundColor: "#e3f2fd",
+      backgroundColor: "#f0f4ff", // lighter than hero
       borderLeft: "4px solid #1976d2",
-      borderRadius: 6,
+      borderRadius: 8,
       color: "#1976d2",
       fontStyle: "italic",
-      maxWidth: 600,
+      padding: "12px 16px",
+      maxWidth: 650,
+      margin: "20px auto 0 auto", // space from hero
+      boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
     }}
   >
-    Tip: Click on a category to explore its commands in the tree!
-  </div>  
-        
+    Tip: Click on a category to explore its commands!!!  <span style={{ color: "red", fontWeight: "bold" }}>DO NOT RELOAD the App AFTER START!!!</span> 
+  </div>
   {/* ===== Command Tree + Schema ===== */}
   <div
     style={{
@@ -1062,7 +974,7 @@ return (
       flexWrap: "nowrap",       // keep side-by-side
       gap: 20,
       alignItems: "flex-start",
-      marginTop: 20,
+      marginTop: 10,
       width: "100%",            // full width
       overflowX: "auto",        // allow scroll on small screens
     }}
@@ -1097,7 +1009,7 @@ return (
               backgroundColor:
                 selectedCategory === category ? "#e3f2fd" : "#f5f5f5",
               transition: "all 0.3s",
-              width: "100%",
+              width: "70%",
               textAlign: "left",
             }}
             onMouseEnter={e => (e.currentTarget.style.backgroundColor = "#bbdefb")}
