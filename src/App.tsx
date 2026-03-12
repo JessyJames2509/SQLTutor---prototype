@@ -392,7 +392,10 @@ function App() {
 
   // UI state
   const [showSurvey, setShowSurvey] = useState(false);
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  type SqlCategory = keyof typeof sqlCommandTree;
+
+  const [selectedCategory, setSelectedCategory] =
+    useState<SqlCategory | null>(null);
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
 
   // Command templates
@@ -967,170 +970,315 @@ return (
   >
     Tip: Click on a category to explore its commands!!!  <span style={{ color: "red", fontWeight: "bold" }}>DO NOT RELOAD the App AFTER START!!!</span> 
   </div>
-  {/* ===== Command Tree + Schema ===== */}
-  <div
-    style={{
-      display: "flex",
-      flexWrap: "nowrap",       // keep side-by-side
-      gap: 20,
-      alignItems: "flex-start",
-      marginTop: 10,
-      width: "100%",            // full width
-      overflowX: "auto",        // allow scroll on small screens
-    }}
-  >
-    {/* ===== Left: Command Tree ===== */}
-    <div
+{/* ===== Categories + Commands Accordion ===== */}
+<div
+  style={{
+    display: "grid",
+    gridTemplateColumns: `repeat(${Object.keys(sqlCommandTree).length}, 1fr)`,
+    gap: 12,
+    marginTop: 20,
+  }}
+>
+  {Object.entries(sqlCommandTree).map(([category, data]) => (
+    <div key={category} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      {/* Main Category Button */}
+      <button
+        onClick={() =>
+          setSelectedCategory(selectedCategory === category ? null : (category as keyof typeof sqlCommandTree))
+        }
         style={{
-          flex: 1,               // take equal space
-          display: "flex",
-          flexDirection: "column",
-          gap: 16,
-          minWidth: 300,         // optional: prevent being too narrow
+          fontWeight: "bold",
+          color: "#1976d2",
+          padding: "10px 16px",
+          borderRadius: 8,
+          border: "2px solid #1976d2",
+          backgroundColor:
+            selectedCategory === category ? "#e3f2fd" : "#f5f5f5",
+          cursor: "pointer",
+          width: "100%",
+          textAlign: "center",
         }}
       >
-      {/* Command Tree Title */}
-      <h2 style={{ marginBottom: 12 }}>Command Categories</h2>
+        {category}
+      </button>
 
-      {Object.entries(sqlCommandTree).map(([category, data]) => (
-        <div key={category}>
-          {/* Category Button */}
-          <button
-            onClick={() =>
-              setSelectedCategory(selectedCategory === category ? null : category)
-            }
-            style={{
-              fontWeight: data.commands.length === 0 ? "normal" : "bold",
-              color: data.commands.length === 0 ? "#888" : "#1976d2",
-              cursor: "pointer",
-              padding: "10px 16px",
-              borderRadius: 8,
-              border: "2px solid #1976d2",
-              backgroundColor:
-                selectedCategory === category ? "#e3f2fd" : "#f5f5f5",
-              transition: "all 0.3s",
-              width: "70%",
-              textAlign: "left",
-            }}
-            onMouseEnter={e => (e.currentTarget.style.backgroundColor = "#bbdefb")}
-            onMouseLeave={e =>
-              (e.currentTarget.style.backgroundColor =
-                selectedCategory === category ? "#e3f2fd" : "#f5f5f5")
-            }
-          >
-            {category} — {data.description}
-          </button>
-
-          {/* Commands Grid */}
-          {selectedCategory === category && (
+      {/* Commands Under Category */}
+      {selectedCategory === category && (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {data.commands.length > 0 ? (
+            data.commands.map(cmd => (
+              <button
+                key={cmd}
+                onClick={() => {
+                  loadCommand(cmd);           // load command in editor
+                  setSelectedCategory(null);  // collapse the command buttons
+                }}
+                style={{
+                  padding: "6px 12px",
+                  borderRadius: 6,
+                  border: "1px solid #1976d2",
+                  backgroundColor: selectedCommand === cmd ? "#1976d2" : "#e3f2fd",
+                  color: selectedCommand === cmd ? "white" : "#1976d2",
+                  cursor: "pointer",
+                  width: "100%",              // full width
+                  textAlign: "center",
+                }}
+              >
+                {cmd}
+              </button>
+            ))
+          ) : (
             <div
               style={{
-                marginTop: 8,
-                display: "grid",
-                gridTemplateColumns: "repeat(auto-fill, minmax(120px, 1fr))",
-                gap: 8,
+                padding: "6px 12px",
+                borderRadius: 6,
+                border: "1px dashed #1976d2",
+                color: "#888",
+                textAlign: "center",
+                fontStyle: "italic",
               }}
             >
-              {data.commands.length > 0 ? (
-                data.commands.map(cmd => (
-                  <button
-                    key={cmd}
-                    onClick={() => loadCommand(cmd)}
-                    style={{
-                      padding: "6px 12px",
-                      borderRadius: 6,
-                      border: "1px solid #1976d2",
-                      backgroundColor:
-                        selectedCommand === cmd ? "#1976d2" : "#e3f2fd",
-                      color: selectedCommand === cmd ? "white" : "#1976d2",
-                      cursor: "pointer",
-                      transition: "all 0.2s",
-                    }}
-                    onMouseEnter={e =>
-                      (e.currentTarget.style.backgroundColor =
-                        selectedCommand === cmd ? "#1565c0" : "#bbdefb")
-                    }
-                    onMouseLeave={e =>
-                      (e.currentTarget.style.backgroundColor =
-                        selectedCommand === cmd ? "#1976d2" : "#e3f2fd")
-                    }
-                  >
-                    {cmd}
-                  </button>
-                ))
-              ) : (
-                <div
-                  style={{
-                    color: "#888",
-                    fontStyle: "italic",
-                    gridColumn: "1 / -1",
-                    textAlign: "center",
-                    padding: "4px 0",
-                  }}
-                >
-                  Future Work — No commands yet
-                </div>
-              )}
+              No commands yet
             </div>
           )}
         </div>
-      ))}
+      )}  
     </div>
+  ))}
+</div>
 
-    {/* ===== Right: Schema Cards ===== */}
-    <div
+  {/* ===== MAIN WORKSPACE ===== */}
+  <div
+    style={{
+      display: "grid",
+      gridTemplateColumns: "1fr 1fr",
+      gap: 30,
+      marginTop: 30,
+      alignItems: "flex-start"
+    }}
+  >
+
+  {/* ===== LEFT SIDE : SQL COMPILER ===== */}
+  <div
+    style={{
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      width: "100%"
+    }}
+  >
+
+  {/* SQL Editor */}
+  <div
+    style={{
+      width: "100%",
+      maxWidth: 650,
+      borderRadius: 8,
+      overflow: "hidden",
+      border: "1px solid #1976d2",
+      backgroundColor: "#f5f7fa",
+      boxShadow: "0 2px 8px rgba(0,0,0,0.05)"
+    }}
+  >
+    <Editor
+      height="220px"
+      language="sql"
+      value={query}
+      onChange={v => setQuery(v || "")}
+      options={{
+        minimap: { enabled: false },
+        fontSize: 14,
+        lineHeight: 20
+      }}
+    />
+  </div>
+
+  {/* Run Query Button */}
+  <button
+    disabled={syntaxErrors.length > 0}
+    onClick={handleRun}
+    style={{
+      marginTop: 12,
+      width: "100%",
+      maxWidth: 650,
+      padding: 12,
+      borderRadius: 8,
+      border: "2px solid #1976d2",
+      backgroundColor: syntaxErrors.length > 0 ? "#e0e0e0" : "#e3f2fd",
+      color: syntaxErrors.length > 0 ? "#888" : "#1976d2",
+      cursor: syntaxErrors.length > 0 ? "not-allowed" : "pointer",
+      fontWeight: "bold"
+    }}
+  >
+    Run Query
+  </button>
+
+  {/* ===== Syntax + Feedback Row ===== */}
+  <div
+    style={{
+      display: "flex",
+      gap: 12,
+      marginTop: 12,
+      width: "100%",
+      flexWrap: "wrap",
+    }}
+  >
+    {/* Left Half: Syntax Hint */}
+    {selectedCommand && (
+      <div
         style={{
-          flex: 1,               // take equal space as tree
-          maxHeight: "80vh",
-          overflowY: "auto",
-          paddingRight: 10,
-          minWidth: 300,         // optional
+          flex: 1,
+          minWidth: 300,
+          padding: "12px 16px",
+          backgroundColor: "#f0f4f8",
+          borderLeft: "4px solid #1976d2",
+          borderRadius: 6,
+          fontFamily: "monospace",
+          whiteSpace: "pre-wrap",
+          overflowX: "auto",
         }}
       >
-      <h2>Database Schema</h2>
-      <div style={{ display: "flex", flexWrap: "wrap", gap: 20 }}>
-        {schema.map(t => (
-          <div
-            key={t.table}
-            ref={t.ref}
-            onMouseEnter={() => setHoveredTable(t.table)}
-            onMouseLeave={() => setHoveredTable(null)}
+        <strong>Syntax Hint:</strong>
+        <pre style={{ margin: 0 }}>{commandTemplates[selectedCommand]}</pre>
+      </div>
+    )}
+
+    {/* Right Half: Syntax Warnings + Feedback */}
+    {(syntaxErrors.length > 0 || feedback || error || syntaxHints.length > 0) && (
+      <div
+        style={{
+          flex: 1,
+          minWidth: 300,
+          padding: 12,
+          backgroundColor: "#f0f4f8",
+          borderLeft: "4px solid #1976d2",
+          borderRadius: 6,
+          fontFamily: "monospace",
+          whiteSpace: "pre-wrap",
+          overflowX: "auto",
+        }}
+      >
+        {/* Syntax Warnings */}
+        {syntaxErrors.map((e, i) => (
+          <p key={i} style={{ color: "orange", margin: "4px 0" }}>
+            ⚠ {e}
+          </p>
+        ))}
+
+        {/* Feedback / Error */}
+        {(feedback || error) && (
+          <p
             style={{
-              border: "2px solid #333",
-              borderRadius: 8,
-              padding: 12,
-              minWidth: 220,
-              backgroundColor: activeTables.has(t.table) ? "#fff3cd" : "#fafafa",
-              borderColor:
-                hoveredTable === t.table
-                  ? "#ff9800"
-                  : activeTables.has(t.table)
-                  ? "#ffb300"
-                  : "#333",
-              transition: "all 0.2s",
-              boxShadow:
-                hoveredTable === t.table ? "0 4px 12px rgba(0,0,0,0.1)" : "",
+              margin: "6px 0",
+              color: error ? "#d32f2f" : "#1976d2",
+              fontWeight: 500,
             }}
           >
-            <h3 style={{ marginTop: 0 }}>{t.table}</h3>
-            {t.pk && (
-              <div style={{ color: "green", fontWeight: "bold" }}>PK: {t.pk}</div>
-            )}
-            {t.fk && t.fk.length > 0 && (
-              <div style={{ color: "blue", fontWeight: "bold" }}>
-                FK: {t.fk.join(", ")}
-              </div>
-            )}
-            <ul style={{ paddingLeft: 18 }}>
-              {t.columns.map(col => (
-                <li key={col}>{col}</li>
-              ))}
-            </ul>
-          </div>
-        ))}
-      </div>
+            {error ? "❌" : "✅"} {error || feedback}
+          </p>
+        )}
 
-      {/* ===== FK lines ===== */}
+        {/* Animated Syntax Tips */}
+        {syntaxHints.length > 0 && (
+          <ul style={{ marginTop: 6, paddingLeft: 20, color: "#388e3c" }}>
+            {syntaxHints.map((tip, i) => (
+              <li
+                key={i}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 6,
+                  opacity: 0,
+                  animation: `fadeInTip 0.4s ease forwards`,
+                  animationDelay: `${i * 0.3}s`,
+                }}
+              >
+                💡 {tip}
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    )}
+
+    {/* Scoped CSS for animation */}
+    <style>{`
+      @keyframes fadeInTip {
+        to {
+          opacity: 1;
+        }
+      }
+    `}</style>
+  </div>
+
+  {/* Execution Step Animation */}
+  {executionSteps.length > 0 &&
+    currentStep >= 0 &&
+    currentStep < executionSteps.length && (
+      <p style={{ fontStyle: "italic", color: "#555" }}>
+        🔹 Step {currentStep + 1}/{executionSteps.length}:{" "}
+        {executionSteps[currentStep]}
+      </p>
+  )}
+
+  </div>
+
+
+  {/* ===== RIGHT SIDE: DATABASE SCHEMA + RESULTS ===== */}
+  <div
+    style={{
+      flex: 1,
+      display: "flex",
+      flexDirection: "column", // stack schema + results vertically
+      maxHeight: "90vh",
+      overflowY: "auto",
+      minWidth: 300,
+      paddingRight: 10,
+    }}
+  >
+    {/* ===== Database Schema Visualizer ===== */}
+    <h2>Database Schema</h2>
+
+    <div style={{ display: "flex", flexWrap: "wrap", gap: 20, position: "relative" }}>
+      {schema.map(t => (
+        <div
+          key={t.table}
+          ref={t.ref as React.RefObject<HTMLDivElement>}
+          onMouseEnter={() => setHoveredTable(t.table)}
+          onMouseLeave={() => setHoveredTable(null)}
+          style={{
+            border: "2px solid #333",
+            borderRadius: 8,
+            padding: 12,
+            minWidth: 220,
+            backgroundColor: activeTables.has(t.table) ? "#fff3cd" : "#fafafa",
+            borderColor:
+              hoveredTable === t.table
+                ? "#ff9800"
+                : activeTables.has(t.table)
+                ? "#ffb300"
+                : "#333",
+            transition: "all 0.2s",
+            boxShadow: hoveredTable === t.table ? "0 4px 12px rgba(0,0,0,0.1)" : "",
+          }}
+        >
+          <h3 style={{ marginTop: 0 }}>{t.table}</h3>
+
+          {t.pk && <div style={{ color: "green", fontWeight: "bold" }}>PK: {t.pk}</div>}
+
+          {t.fk && t.fk.length > 0 && (
+            <div style={{ color: "blue", fontWeight: "bold" }}>FK: {t.fk.join(", ")}</div>
+          )}
+
+          <ul style={{ paddingLeft: 18 }}>
+            {t.columns.map(col => (
+              <li key={col}>{col}</li>
+            ))}
+          </ul>
+        </div>
+      ))}
+
+      {/* ===== FK Relationship Lines ===== */}
       <svg
         style={{
           position: "absolute",
@@ -1180,250 +1328,73 @@ return (
         )}
       </svg>
     </div>
+
+    {/* ===== Results Table UNDER SCHEMA ===== */}
+    <div
+      style={{
+        marginTop: 20,
+        padding: 16,
+        backgroundColor: "#f5f7fa",
+        borderRadius: 12,
+        boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
+        overflowX: "auto",
+        width: "100%",
+      }}
+    >
+      <h3 style={{ marginBottom: 12, color: "#1976d2" }}>Results</h3>
+
+      {rows.length === 0 && <p style={{ color: "#555" }}>No results yet.</p>}
+
+      {rows.length > 0 && (
+        <table style={{ width: "100%", borderCollapse: "collapse" }}>
+          <thead>
+            <tr>
+              {columns.map(c => (
+                <th
+                  key={c}
+                  style={{
+                    textAlign: "left",
+                    padding: "6px 12px",
+                    backgroundColor: "#e3f2fd",
+                    borderRadius: "6px 6px 0 0",
+                    color: "#1976d2",
+                  }}
+                >
+                  {c}
+                </th>
+              ))}
+            </tr>
+          </thead>
+
+          <tbody>
+            {rows.map((r, i) => (
+              <tr
+                key={i}
+                style={{ backgroundColor: i % 2 === 0 ? "#ffffff" : "#f0f4f8" }}
+              >
+                {r.map((c, j) => (
+                  <td key={j} style={{ padding: "6px 12px", borderBottom: "1px solid #e0e0e0" }}>
+                    {c}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </div>
   </div>
 
-    {/* ===== Editor + Results Below Tree + Schema ===== */}
+  </div>
+
+    {/* ===== Feedback Button ===== */}
     <div
       style={{
         marginTop: 20,
         display: "flex",
-        flexDirection: "column",
-        gap: 12,
-        width: "100%",
-        minHeight: "100vh",
-        boxSizing: "border-box",
-        overflowY: "auto",
+        justifyContent: "center", // center horizontally
       }}
     >
-    {/* ===== Editor + Run Button Row ===== */}
-    <div style={{ display: "flex", gap: 12, alignItems: "flex-start" }}>
-      {/* Editor */}
-      <div
-        style={{
-          flex: 1,
-          borderRadius: 8,
-          overflow: "hidden",
-          border: "1px solid #1976d2",
-          backgroundColor: "#f5f7fa",
-          boxShadow: "0 2px 8px rgba(0,0,0,0.05)",
-        }}
-      >
-        <Editor
-          height="220px"
-          language="sql"
-          value={query}
-          onChange={v => setQuery(v || "")}
-          options={{
-            minimap: { enabled: false },
-            fontSize: 14,
-            lineHeight: 20,
-          }}
-        />
-      </div>
-
-      {/* Run Query Button */}
-      <button
-        disabled={syntaxErrors.length > 0}
-        onClick={handleRun}
-        style={{
-          padding: "10px 16px",
-          borderRadius: 8,
-          border: "2px solid #1976d2",
-          backgroundColor: syntaxErrors.length > 0 ? "#e0e0e0" : "#e3f2fd",
-          color: syntaxErrors.length > 0 ? "#888" : "#1976d2",
-          cursor: syntaxErrors.length > 0 ? "not-allowed" : "pointer",
-          fontWeight: "bold",
-          transition: "all 0.3s",
-          height: "42px",
-          alignSelf: "flex-start",
-        }}
-        onMouseEnter={e => {
-          if (syntaxErrors.length === 0) e.currentTarget.style.backgroundColor = "#bbdefb";
-        }}
-        onMouseLeave={e => {
-          if (syntaxErrors.length === 0) e.currentTarget.style.backgroundColor = "#e3f2fd";
-        }}
-      >
-        Run Query
-      </button>
-    </div>
-    {/* ===== Command Syntax Hint Panel ===== */}
-    {selectedCommand && (
-      <div
-        style={{
-          marginTop: 12,
-          padding: "12px 16px",
-          backgroundColor: "#f0f4f8",
-          borderLeft: "4px solid #1976d2",
-          borderRadius: 6,
-          fontFamily: "monospace",
-          color: "#1976d2",
-          whiteSpace: "pre-wrap",
-          overflowX: "auto",
-          maxWidth: "100%",
-        }}
-      >
-        <strong>Syntax Hint:</strong>
-        <pre style={{ margin: 0 }}>{commandTemplates[selectedCommand]}</pre>
-      </div>
-    )}
-
-    {/* Syntax Warnings */}
-    {syntaxErrors.map((e, i) => (
-      <p key={i} style={{ color: "orange", margin: "4px 0" }}>
-        ⚠ {e}
-      </p>
-    ))}
-    
-  {/* Feedback + Error + Animated Syntax Tips Panel */}
-  {(feedback || error || syntaxHints.length > 0) && (
-    <div
-      style={{
-        marginTop: 6,
-        padding: "12px 16px",
-        backgroundColor: "#f0f4f8",
-        borderLeft: "4px solid #1976d2",
-        borderRadius: 6,
-        fontFamily: "monospace",
-        whiteSpace: "pre-wrap",
-        overflowX: "auto",
-      }}
-    >
-      {/* Feedback / Error Message */}
-      {(feedback || error) && (
-        <p
-          style={{
-            margin: 0,
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            color: error
-              ? "#d32f2f"
-              : syntaxErrors.length > 0
-              ? "#f57c00"
-              : "#1976d2",
-            fontWeight: 500,
-          }}
-        >
-          {error ? "❌" : syntaxErrors.length > 0 ? "⚠" : "✅"}
-          {error || feedback}
-        </p>
-      )}
-
-      {/* Animated Syntax Tips */}
-      {syntaxHints.length > 0 && (
-        <ul style={{ marginTop: 4, paddingLeft: 20, color: "#388e3c" }}>
-          {syntaxHints.map((tip, i) => (
-            <li
-              key={i}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-                opacity: 0,
-                animation: `fadeInTip 0.4s ease forwards`,
-                animationDelay: `${i * 0.3}s`,
-              }}
-            >
-              💡 {tip}
-            </li>
-          ))}
-        </ul>
-      )}
-    </div>
-  )}
-
-    {/* Scoped CSS for animation */}
-    <style>{`
-      @keyframes fadeInTip {
-        to {
-          opacity: 1;
-        }
-      }
-    `}</style>
-
-    {/* ===== Execution Steps Animation ===== */}
-    {executionSteps.length > 0 && currentStep >= 0 && currentStep < executionSteps.length && (
-      <p style={{ fontStyle: "italic", color: "#555" }}>
-        🔹 Step {currentStep + 1}/{executionSteps.length}: {executionSteps[currentStep]}
-      </p>
-    )}
-
-      {/* ===== Results Table ===== */}
-  <div
-    style={{
-      marginTop: 20,
-      padding: 16,
-      backgroundColor: "#f5f7fa",
-      borderRadius: 12,
-      boxShadow: "0 4px 12px rgba(0,0,0,0.08)",
-      overflowX: "auto",
-    }}
-  >
-    <h3 style={{ marginBottom: 12, color: "#1976d2" }}>Results</h3>
-
-    {rows.length === 0 && <p style={{ color: "#555" }}>No results yet.</p>}
-
-    {rows.length > 0 && (
-      <table
-        style={{
-          width: "100%",
-          borderCollapse: "separate",
-          borderSpacing: "0 6px",
-        }}
-      >
-        <thead>
-          <tr>
-            {columns.map(c => (
-              <th
-                key={c}
-                style={{
-                  padding: "8px 12px",
-                  textAlign: "left",
-                  backgroundColor: "#e3f2fd",
-                  borderRadius: "8px 8px 0 0",
-                  color: "#1976d2",
-                }}
-              >
-                {c}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => (
-            <tr
-              key={i}
-              style={{
-                backgroundColor: i % 2 === 0 ? "#ffffff" : "#f0f4f8",
-                transition: "background-color 0.2s",
-              }}
-              onMouseEnter={e => (e.currentTarget.style.backgroundColor = "#dceefb")}
-              onMouseLeave={e =>
-                (e.currentTarget.style.backgroundColor = i % 2 === 0 ? "#ffffff" : "#f0f4f8")
-              }
-            >
-              {r.map((c, j) => (
-                <td
-                  key={j}
-                  style={{
-                    padding: "8px 12px",
-                    borderBottom: "1px solid #e0e0e0",
-                  }}
-                >
-                  {c}
-                </td>
-              ))}
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    )}
-  </div>
-</div>
-
-    {/* ===== Feedback Button ===== */}
-    <div style={{ marginTop: 20 }}>
       <button
         onClick={async () => {
           try {
@@ -1456,76 +1427,76 @@ return (
       </button>
     </div>
 
-      {/* ===== Survey Modal ===== */}
-      {showSurvey && (
+    {/* ===== Survey Modal ===== */}
+    {showSurvey && (
+      <div
+        style={{
+          position: "fixed",
+          top: 0,
+          left: 0,
+          width: "100%",
+          height: "100%",
+          backgroundColor: "rgba(0,0,0,0.6)",
+          zIndex: 1000,
+          display: "flex",
+          justifyContent: "center",
+          alignItems: "center",
+          padding: 10,
+        }}
+      >
         <div
           style={{
-            position: "fixed",
-            top: 0,
-            left: 0,
+            background: "white",
+            padding: 20,
+            borderRadius: 12,
             width: "100%",
-            height: "100%",
-            backgroundColor: "rgba(0,0,0,0.6)",
-            zIndex: 1000,
-            display: "flex",
-            justifyContent: "center",
-            alignItems: "center",
-            padding: 10,
+            maxWidth: 800,
+            position: "relative",
+            boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+            maxHeight: "90vh",
+            overflowY: "auto",
           }}
         >
-          <div
+          {/* Close Button */}
+          <button
+            onClick={() => setShowSurvey(false)}
             style={{
-              background: "white",
-              padding: 20,
-              borderRadius: 12,
-              width: "100%",
-              maxWidth: 800,
-              position: "relative",
-              boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
-              maxHeight: "90vh",
-              overflowY: "auto",
+              position: "absolute",
+              top: 10,
+              right: 10,
+              fontSize: 20,
+              border: "none",
+              background: "transparent",
+              cursor: "pointer",
             }}
           >
-            {/* Close Button */}
-            <button
-              onClick={() => setShowSurvey(false)}
-              style={{
-                position: "absolute",
-                top: 10,
-                right: 10,
-                fontSize: 20,
-                border: "none",
-                background: "transparent",
-                cursor: "pointer",
-              }}
-            >
-              ✖
-            </button>
+            ✖
+          </button>
 
-            <h2 style={{ marginTop: 0 }}>Evaluation Survey</h2>
-            <p>
-              Your feedback helps improve this SQL learning tool. This survey takes
-              less than 2 minutes.
-            </p>
+          <h2 style={{ marginTop: 0 }}>Evaluation Survey</h2>
+          <p>
+            Your feedback helps improve this SQL learning tool. This survey takes
+            less than 2 minutes.
+          </p>
 
-            <p style={{ fontWeight: "bold", marginBottom: 10 }}>
-              Please copy this Session ID into the first question of the survey: <br />
-              {sessionId}
-            </p>
+          <p style={{ fontWeight: "bold", marginBottom: 10 }}>
+            Please copy this Session ID into the first question of the survey: <br />
+            {sessionId}
+          </p>
 
-            <iframe
-              src={`https://docs.google.com/forms/d/e/1FAIpQLSew607JecHfhQmGcrs-G8lxix8HGnZneUCDzMjeKfRaqOueEA/viewform?usp=pp_url&entry.1551736835=${sessionId}&embedded=true`}
-              width="100%"
-              height="500"
-              frameBorder="0"
-              style={{ borderRadius: 8 }}
-              title="SQL Tutor Feedback Form"
-            >
-              Loading…
-            </iframe>
-          </div>
+          <iframe
+            src={`https://docs.google.com/forms/d/e/1FAIpQLSew607JecHfhQmGcrs-G8lxix8HGnZneUCDzMjeKfRaqOueEA/viewform?usp=pp_url&entry.1551736835=${sessionId}&embedded=true`}
+            width="100%"
+            height="500"
+            frameBorder="0"
+            style={{ borderRadius: 8 }}
+            title="SQL Tutor Feedback Form"
+          >
+            Loading…
+          </iframe>
         </div>
-      )}
+      </div>
+    )}
       
     </div>
   
