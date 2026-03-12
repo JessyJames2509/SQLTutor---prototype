@@ -398,6 +398,8 @@ function App() {
     useState<SqlCategory | null>(null);
   const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
 
+  const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
+
   // Command templates
   const commandTemplates: Record<string, string> = {
     "CREATE TABLE": `
@@ -968,84 +970,138 @@ return (
       boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
     }}
   >
-    Tip: Click on a category to explore its commands!!!  <span style={{ color: "red", fontWeight: "bold" }}>DO NOT RELOAD the App AFTER START!!!</span> 
+Tip: Hover over / Click an SQL category to reveal its commands and start practicing.{" "}
+<span style={{ color: "#1976d2", fontWeight: "bold" }}>
+  Please do not refresh the page during the session.
+</span>
   </div>
-{/* ===== Categories + Commands Accordion ===== */}
-<div
-  style={{
-    display: "grid",
-    gridTemplateColumns: `repeat(${Object.keys(sqlCommandTree).length}, 1fr)`,
-    gap: 12,
-    marginTop: 20,
-  }}
->
-  {Object.entries(sqlCommandTree).map(([category, data]) => (
-    <div key={category} style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-      {/* Main Category Button */}
-      <button
-        onClick={() =>
-          setSelectedCategory(selectedCategory === category ? null : (category as keyof typeof sqlCommandTree))
-        }
-        style={{
-          fontWeight: "bold",
-          color: "#1976d2",
-          padding: "10px 16px",
-          borderRadius: 8,
-          border: "2px solid #1976d2",
-          backgroundColor:
-            selectedCategory === category ? "#e3f2fd" : "#f5f5f5",
-          cursor: "pointer",
-          width: "100%",
-          textAlign: "center",
-        }}
-      >
-        {category}
-      </button>
+  {/* ===== Categories + Commands Accordion ===== */}
+  <div
+    style={{
+      display: "grid",
+      gridTemplateColumns: `repeat(${Object.keys(sqlCommandTree).length}, 1fr)`,
+      gap: 12,
+      marginTop: 20,
+    }}
+  >
+    {Object.entries(sqlCommandTree).map(([category, data]) => (
+      <div key={category} style={{ display: "flex", flexDirection: "column", gap: 8, position: "relative" }}>
 
-      {/* Commands Under Category */}
-      {selectedCategory === category && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-          {data.commands.length > 0 ? (
-            data.commands.map(cmd => (
-              <button
-                key={cmd}
-                onClick={() => {
-                  loadCommand(cmd);           // load command in editor
-                  setSelectedCategory(null);  // collapse the command buttons
-                }}
+        {/* Main Category Button */}
+        <button
+          onMouseEnter={() => setHoveredCategory(category)}
+          onMouseLeave={() => setHoveredCategory(null)}
+          onClick={() =>
+            setSelectedCategory(
+              selectedCategory === category
+                ? null
+                : (category as keyof typeof sqlCommandTree)
+            )
+          }
+          style={{
+            fontWeight: "bold",
+            color: "#1976d2",
+            padding: "10px 16px",
+            borderRadius: 8,
+            border: "2px solid #1976d2",
+            backgroundColor:
+              selectedCategory === category ? "#a8c9e0" : "#9dcbe1",
+            cursor: "pointer",
+            width: "100%",
+            textAlign: "center",
+          }}
+        >
+          {category}
+        </button>
+
+        {/* Tooltip */}
+        {hoveredCategory === category && (
+          <div
+            style={{
+              position: "absolute",
+              top: -5,
+              left: "50%",
+              transform: "translate(-50%, -100%)",
+              background: "white",
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              padding: 10,
+              width: 220,
+              boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
+              zIndex: 100,
+              fontSize: 13,
+              textAlign: "left"
+            }}
+          >
+            <strong>{category}</strong>
+
+            <p style={{ margin: "6px 0", color: "#555" }}>
+              {data.description}
+            </p>
+
+            {data.commands.length > 0 ? (
+              <>
+                <strong style={{ fontSize: 12 }}>Commands:</strong>
+                <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>
+                  {data.commands.map(cmd => (
+                    <li key={cmd}>{cmd}</li>
+                  ))}
+                </ul>
+              </>
+            ) : (
+              <p style={{ fontStyle: "italic", color: "#888", margin: 0 }}>
+                Commands coming soon
+              </p>
+            )}
+          </div>
+        )}
+
+        {/* Commands Under Category */}
+        {selectedCategory === category && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {data.commands.length > 0 ? (
+              data.commands.map(cmd => (
+                <button
+                  key={cmd}
+                  onClick={() => {
+                    loadCommand(cmd);
+                    setSelectedCategory(null);
+                  }}
+                  style={{
+                    padding: "6px 12px",
+                    borderRadius: 6,
+                    border: "1px solid #1976d2",
+                    backgroundColor:
+                      selectedCommand === cmd ? "#1976d2" : "#e3f2fd",
+                    color: selectedCommand === cmd ? "white" : "#1976d2",
+                    cursor: "pointer",
+                    width: "100%",
+                    textAlign: "center",
+                  }}
+                >
+                  {cmd}
+                </button>
+              ))
+            ) : (
+              <div
                 style={{
                   padding: "6px 12px",
                   borderRadius: 6,
-                  border: "1px solid #1976d2",
-                  backgroundColor: selectedCommand === cmd ? "#1976d2" : "#e3f2fd",
-                  color: selectedCommand === cmd ? "white" : "#1976d2",
-                  cursor: "pointer",
-                  width: "100%",              // full width
+                  border: "1px dashed #1976d2",
+                  color: "#888",
                   textAlign: "center",
+                  fontStyle: "italic",
                 }}
               >
-                {cmd}
-              </button>
-            ))
-          ) : (
-            <div
-              style={{
-                padding: "6px 12px",
-                borderRadius: 6,
-                border: "1px dashed #1976d2",
-                color: "#888",
-                textAlign: "center",
-                fontStyle: "italic",
-              }}
-            >
-              No commands yet
-            </div>
-          )}
-        </div>
-      )}  
-    </div>
-  ))}
-</div>
+                No commands yet
+              </div>
+            )}
+          </div>
+        )}
+
+      </div>
+    ))}
+  </div>
 
   {/* ===== MAIN WORKSPACE ===== */}
   <div
