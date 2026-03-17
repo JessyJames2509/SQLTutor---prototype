@@ -350,6 +350,51 @@ const sqlCommandTree = {
   DCL: { description: "Access Control (Future Work)", commands: [] }
 };
 
+const detectCommand = (query: string): string => {
+  return query.trim().split(/\s+/)[0]?.toUpperCase() || "";
+};
+
+const extractTableNamesLive = (query: string): string[] => {
+  const tables: string[] = [];
+  const cleanQuery = query.replace(/'[^']*'|"[^"]*"/g, '');
+
+  const patterns = [
+    /FROM\s+([^\s,;()]+)/gi,
+    /JOIN\s+([^\s,;()]+)/gi,
+    /UPDATE\s+([^\s,;()]+)/gi,
+    /INTO\s+([^\s(]+)/gi,
+    /TABLE\s+([^\s(]+)/gi
+  ];
+
+  patterns.forEach(pattern => {
+    let match;
+    while ((match = pattern.exec(cleanQuery)) !== null) {
+      const table = match[1].replace(/[`'"]/g, '');
+      if (!tables.includes(table)) tables.push(table);
+    }
+  });
+
+  return tables;
+};
+
+const getSelectClauseState = (query: string): string => {
+  const upper = query.toUpperCase();
+
+  if (!upper.includes("SELECT")) return "START";
+  if (!upper.includes("FROM")) return "SELECT";
+  if (upper.includes("FROM") && !upper.includes("WHERE") && !upper.includes("GROUP BY") && !upper.includes("ORDER BY"))
+    return "FROM";
+  if (upper.includes("WHERE") && !upper.includes("GROUP BY"))
+    return "WHERE";
+  if (upper.includes("GROUP BY") && !upper.includes("ORDER BY"))
+    return "GROUP_BY";
+  if (upper.includes("ORDER BY"))
+    return "ORDER_BY";
+
+  return "COMPLETE";
+};
+
+import * as monaco from "monaco-editor";
   
 /* =======================
    App
@@ -389,6 +434,224 @@ function App() {
   const [schema, setSchema] = useState<TableSchema[]>([]);
   const [syntaxErrors, setSyntaxErrors] = useState<string[]>([]);
   const [hoveredTable, setHoveredTable] = useState<string | null>(null);
+
+      /* =======================
+      Monaco SQL Autocomplete
+    ======================= */
+    useEffect(() => {
+      monaco.languages.registerCompletionItemProvider("sql", {
+        provideCompletionItems: (model, position) => {
+          const suggestions: monaco.languages.CompletionItem[] = [];
+
+          const wordUntil = model.getWordUntilPosition(position);
+          const range = new monaco.Range(
+            position.lineNumber,
+            wordUntil.startColumn,
+            position.lineNumber,
+            wordUntil.endColumn
+          );
+
+          // SQL keywords
+          const keywords = [
+            "SELECT", "FROM", "WHERE", "GROUP BY", "ORDER BY",
+            "INSERT INTO", "VALUES",
+            "UPDATE", "SET",
+            "DELETE FROM",
+            "CREATE TABLE",
+            "ALTER TABLE",
+            "DROP TABLE",
+            "JOIN", "ON"
+          ];
+
+          keywords.forEach(k => {
+            suggestions.push({
+              label: k,
+              kind: monaco.languages.CompletionItemKind.Keyword,
+              insertText: k,
+              range // <-- required
+            });
+          });
+
+          // Tables + Columns
+          schema.forEach(table => {
+            suggestions.push({
+              label: table.table,
+              kind: monaco.languages.CompletionItemKind.Struct,
+              insertText: table.table,
+              range
+            });
+
+            table.columns.forEach(col => {
+              suggestions.push({
+                label: col,
+                kind: monaco.languages.CompletionItemKind.Field,
+                insertText: col,
+                range
+              });
+            });
+          });
+
+          return { suggestions };
+        }
+      });
+    }, [schema]);
+
+  /* =======================
+   Real-Time Tutoring Engine
+======================= */
+useEffect(() => {
+  if (!query.trim()) {
+    setFeedback(null);
+    setSyntaxHints([]);
+    setActiveTables(new Set());
+    return;
+  }
+
+  const command = detectCommand(query);
+
+  // 1️⃣ Syntax validation (no category dependency anymore)
+  const syntaxErrs = validateSyntax(query, command as any);
+  setSyntaxErrors(syntaxErrs);
+
+  // 2️⃣ Live table highlighting
+  const liveTables = extractTableNamesLive(query);
+  setActiveTables(new Set(liveTables));
+
+  // 3️⃣ Real-time tutoring logic
+  let liveHint = "";
+  let tips: string[] = [];
+
+  // =========================
+  // SELECT STATE MACHINE
+  // =========================
+  if (command === "SELECT") {
+    const state = getSelectClauseState(query);
+
+    switch (state) {
+      case "START":
+        liveHint = "Start your query with SELECT to retrieve data.";
+        break;
+
+      case "SELECT":
+        if (!/SELECT\s+\S+/i.test(query))
+          liveHint = "After SELECT, specify column names or use *.";
+        else
+          liveHint = "Good. Now add a FROM clause to specify the table.";
+        break;
+
+      case "FROM":
+        if (/FROM\s*$/i.test(query))
+          liveHint = `Select a table. Available tables: ${schema.map(t => t.table).join(", ")}`;
+        else
+          liveHint = "You may now add WHERE, GROUP BY, or ORDER BY.";
+        break;
+
+      case "WHERE":
+        liveHint = "Specify filtering condition. Example: WHERE column = value.";
+        break;
+
+      case "GROUP_BY":
+        liveHint = "GROUP BY groups rows. Make sure selected columns match.";
+        break;
+
+      case "ORDER_BY":
+        liveHint = "ORDER BY sorts the result. Use ASC or DESC.";
+        break;
+
+      case "COMPLETE":
+        liveHint = "Query structure looks complete. You can run it.";
+        break;
+    }
+
+    tips.push("SELECT syntax: SELECT columns FROM table [WHERE] [GROUP BY] [ORDER BY];");
+  }
+
+  // =========================
+  // INSERT
+  // =========================
+  else if (command === "INSERT") {
+    if (!/INTO/i.test(query))
+      liveHint = "INSERT requires INTO table_name.";
+    else if (!/\(.*\)/.test(query))
+      liveHint = "Specify columns in parentheses after table name.";
+    else if (!/VALUES/i.test(query))
+      liveHint = "Use VALUES (...) to insert data.";
+    else
+      liveHint = "INSERT structure looks correct. Ready to execute.";
+
+    tips.push("INSERT INTO table (col1, col2) VALUES (val1, val2);");
+  }
+
+  // =========================
+  // UPDATE
+  // =========================
+  else if (command === "UPDATE") {
+    if (!/SET/i.test(query))
+      liveHint = "UPDATE requires SET column = value.";
+    else if (!/WHERE/i.test(query))
+      liveHint = "Consider adding WHERE to avoid updating all rows.";
+    else
+      liveHint = "UPDATE structure looks correct.";
+
+    tips.push("UPDATE table SET column=value WHERE condition;");
+  }
+
+  // =========================
+  // DELETE
+  // =========================
+  else if (command === "DELETE") {
+    if (!/FROM/i.test(query))
+      liveHint = "DELETE requires FROM table_name.";
+    else if (!/WHERE/i.test(query))
+      liveHint = "Warning: Without WHERE, all rows will be deleted.";
+    else
+      liveHint = "DELETE structure looks correct.";
+
+    tips.push("DELETE FROM table WHERE condition;");
+  }
+
+  // =========================
+  // CREATE TABLE
+  // =========================
+  else if (command === "CREATE") {
+    if (!/TABLE/i.test(query))
+      liveHint = "Did you mean CREATE TABLE?";
+    else if (!/\(/.test(query))
+      liveHint = "Define columns inside parentheses.";
+    else
+      liveHint = "Define columns as: column_name TYPE.";
+
+    tips.push("CREATE TABLE table_name (column TYPE, ...);");
+  }
+
+  // =========================
+  // ALTER TABLE
+  // =========================
+  else if (command === "ALTER") {
+    if (!/TABLE/i.test(query))
+      liveHint = "ALTER requires TABLE keyword.";
+    else if (!/ADD/i.test(query))
+      liveHint = "Use ADD COLUMN column_name TYPE.";
+    else
+      liveHint = "ALTER TABLE structure looks correct.";
+
+    tips.push("ALTER TABLE table_name ADD COLUMN column TYPE;");
+  }
+
+  // =========================
+  // DROP TABLE
+  // =========================
+  else if (command === "DROP") {
+    if (!/TABLE/i.test(query))
+      liveHint = "DROP requires TABLE keyword.";
+    else
+      liveHint = "DROP TABLE will permanently remove structure.";
+  }
+
+  setFeedback(liveHint);
+  setSyntaxHints(tips);
+
+}, [query, schema]);
 
   // UI state
   const [showSurvey, setShowSurvey] = useState(false);
@@ -490,19 +753,6 @@ const exportSessionToGoogleForm = async () => {
 };
 
 
-  /* =======================
-     Live Validation
-  ======================= */
-    useEffect(() => {
-      // Only syntax validation, no automatic SELECT execution
-      const syntaxErrs = selectedCategory
-        ? validateSyntax(query, selectedCategory as any)
-        : [];
-      setSyntaxErrors(syntaxErrs);
-
-      // Clear previous feedback if query changed but do not execute SELECT
-      setFeedback(null);
-    }, [query, selectedCategory]);
 
 
 
@@ -1160,7 +1410,7 @@ Tip: Hover over / Click an SQL category to reveal its commands and start practic
       padding: 12,
       borderRadius: 8,
       border: "2px solid #1976d2",
-      backgroundColor: syntaxErrors.length > 0 ? "#e0e0e0" : "#e3f2fd",
+      backgroundColor: syntaxErrors.length > 0 ? "#e0e0e0" : "#9dcbe1",
       color: syntaxErrors.length > 0 ? "#888" : "#1976d2",
       cursor: syntaxErrors.length > 0 ? "not-allowed" : "pointer",
       fontWeight: "bold"
