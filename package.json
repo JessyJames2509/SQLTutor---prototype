@@ -3,7 +3,7 @@
   "private": true,
   "version": "0.0.0",
   "type": "module",
-  "homepage": "https://jessyjames2509.github.io/SQLTutor---thesis",
+  "homepage": "https://JessyJames2509.github.io/SQLTutor---prototype/",
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
