@@ -5,7 +5,7 @@
 **Bachelor of Science Thesis Project**  
 Department of Computing and Digital, University Centre Rotherham, UK  
 
-[Live Demo](https://jessyjames2509.github.io/SQLTutor---thesis)
+[Live Demo](https://jessyjames2509.github.io/SQLTutor---prototype)
 
 ---
 
@@ -96,8 +96,8 @@ By providing **real-time debugging hints** and **step-by-step query visualizatio
 Run the following commands in your terminal:
 
 ```bash
-git clone https://github.com/JessyJames2509/SQLTutor---thesis.git
-cd SQLTutor---thesis/sql-playground
+git clone https://github.com/JessyJames2509/SQLTutor---prototype.git
+cd SQLTutor---prototype/sql-playground
 npm install
 npm run dev 
 ```
@@ -118,7 +118,7 @@ Constructive feedback is welcome, especially regarding:
 - SQL correctness and edge cases  
 - Suggestions for additional exercises, visualizations, or debugging support  
 
-Submit feedback via [GitHub Issues](https://github.com/JessyJames2509/SQLTutor---thesis/issues).
+Submit feedback via [GitHub Issues](https://github.com/JessyJames2509/SQLTutor---prototype/issues).
 
 ---
 
