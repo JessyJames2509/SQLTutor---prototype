@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import Editor from "@monaco-editor/react";
 import { initDB } from "./sqlEngine";
 import type { Database } from "sql.js";
@@ -349,6 +349,13 @@ const sqlCommandTree = {
   TCL: { description: "Transaction Control (Future Work)", commands: [] },
   DCL: { description: "Access Control (Future Work)", commands: [] }
 };
+const sqlCommandTreeWithHelp = {
+  ...sqlCommandTree,
+  HELP: {
+    description: "Help topics",
+    commands: ["HOW", "CONCEPTS", "INTERFACE"], // your help topics
+  },
+};
 
 const detectCommand = (query: string): string => {
   return query.trim().split(/\s+/)[0]?.toUpperCase() || "";
@@ -655,13 +662,13 @@ useEffect(() => {
 
   // UI state
   const [showSurvey, setShowSurvey] = useState(false);
-  type SqlCategory = keyof typeof sqlCommandTree;
-
-  const [selectedCategory, setSelectedCategory] =
-    useState<SqlCategory | null>(null);
-  const [selectedCommand, setSelectedCommand] = useState<string | null>(null);
-
+  const [showHelp, setShowHelp] = useState(false);
+  const [helpSection, setHelpSection] = useState<"HOW" | "CONCEPTS" | "INTERFACE">("HOW");
+  const [selectedCommand, setSelectedCommand] = useState<keyof typeof commandTemplates | null>(null);
+  
   const [hoveredCategory, setHoveredCategory] = useState<string | null>(null);
+  const hideTooltipTimeout = useRef<number | null>(null);
+  
 
   // Command templates
   const commandTemplates: Record<string, string> = {
@@ -907,7 +914,7 @@ const runQuery = async () => {
   // -----------------------
   // Validate syntax
   // -----------------------
-  const syntaxErrs = validateSyntax(query, selectedCategory as any);
+  const syntaxErrs = validateSyntax(query, selectedCommand as any);
   setSyntaxErrors(syntaxErrs);
   if (syntaxErrs.length > 0) {
     setSyntaxErrorCount(prev => prev + 1);
@@ -1072,8 +1079,12 @@ const runQuery = async () => {
           setColumns(columnNames);
 
           // Fetch rows; empty array if none
-          const dataRes = db.exec(`SELECT * FROM ${tableName} LIMIT 50;`);
-          setRows(dataRes?.[0]?.values || []);
+          if (command === "SELECT") {
+              const dataRes = db.exec(query);
+              setRows(dataRes?.[0]?.values || []);
+              const columnNames = dataRes?.[0]?.columns || [];
+              setColumns(columnNames);
+          }
         } catch (err) {
           console.error(`Failed to fetch data from ${tableName}:`, err);
           setColumns([]);
@@ -1200,10 +1211,7 @@ return (
     <p style={{ fontSize: "1.2rem", fontWeight: "normal", opacity: 0.9, marginBottom: "24px" }}>
       / Tutoring app-prototype under construction /
     </p>
-    <p style={{ fontSize: "1rem", lineHeight: 1.6, opacity: 0.85 }}>
-      This tool allows you to explore SQL by selecting command categories and experimenting with live queries. 
-      Instead of solving fixed exercises, you can observe how each SQL command affects the database structure and results in real time.
-    </p>
+    
   </div>
 
   {/* Optional: small call-to-action or tip */}
@@ -1220,42 +1228,48 @@ return (
       boxShadow: "0 4px 12px rgba(0,0,0,0.05)",
     }}
   >
-Tip: Hover over / Click an SQL category to reveal its commands and start practicing.{" "}
-<span style={{ color: "#1976d2", fontWeight: "bold" }}>
-  Please do not refresh the page during the session.
-</span>
+Tip: Explore Help or Hover over an SQL category to reveal its commands and start practicing.
   </div>
   {/* ===== Categories + Commands Accordion ===== */}
   <div
     style={{
       display: "grid",
-      gridTemplateColumns: `repeat(${Object.keys(sqlCommandTree).length}, 1fr)`,
+      gridTemplateColumns: "repeat(auto-fit, minmax(120px, 1fr))",
       gap: 12,
       marginTop: 20,
     }}
   >
-    {Object.entries(sqlCommandTree).map(([category, data]) => (
-      <div key={category} style={{ display: "flex", flexDirection: "column", gap: 8, position: "relative" }}>
-
+    {Object.entries(sqlCommandTreeWithHelp).map(([category, data]) => (
+      <div
+        key={category}
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+          position: "relative",
+        }}
+        onMouseEnter={() => {
+          if (hideTooltipTimeout.current) {
+            clearTimeout(hideTooltipTimeout.current);
+            hideTooltipTimeout.current = null;
+          }
+          setHoveredCategory(category);
+        }}
+        onMouseLeave={() => {
+          hideTooltipTimeout.current = window.setTimeout(() => {
+            setHoveredCategory(null);
+          }, 150);
+        }}
+      >
         {/* Main Category Button */}
         <button
-          onMouseEnter={() => setHoveredCategory(category)}
-          onMouseLeave={() => setHoveredCategory(null)}
-          onClick={() =>
-            setSelectedCategory(
-              selectedCategory === category
-                ? null
-                : (category as keyof typeof sqlCommandTree)
-            )
-          }
           style={{
             fontWeight: "bold",
             color: "#1976d2",
             padding: "10px 16px",
             borderRadius: 8,
             border: "2px solid #1976d2",
-            backgroundColor:
-              selectedCategory === category ? "#a8c9e0" : "#9dcbe1",
+            backgroundColor: "#9dcbe1",
             cursor: "pointer",
             width: "100%",
             textAlign: "center",
@@ -1280,21 +1294,42 @@ Tip: Hover over / Click an SQL category to reveal its commands and start practic
               boxShadow: "0 4px 12px rgba(0,0,0,0.15)",
               zIndex: 100,
               fontSize: 13,
-              textAlign: "left"
+              textAlign: "left",
             }}
           >
             <strong>{category}</strong>
-
-            <p style={{ margin: "6px 0", color: "#555" }}>
-              {data.description}
-            </p>
+            <p style={{ margin: "6px 0", color: "#555" }}>{data.description}</p>
 
             {data.commands.length > 0 ? (
               <>
                 <strong style={{ fontSize: 12 }}>Commands:</strong>
                 <ul style={{ margin: "4px 0 0 16px", padding: 0 }}>
-                  {data.commands.map(cmd => (
-                    <li key={cmd}>{cmd}</li>
+                  {data.commands.map((cmd) => (
+                    <li
+                      key={cmd}
+                      onClick={() => {
+                        if (category === "HELP") {
+                          setHelpSection(cmd as "HOW" | "CONCEPTS" | "INTERFACE");
+                          setShowHelp(true);
+                        } else {
+                          loadCommand(cmd);
+                        }
+                      }}
+                      style={{
+                        cursor: "pointer",
+                        padding: "4px 0",
+                        color: "#1976d2",
+                        borderRadius: 4,
+                      }}
+                      onMouseEnter={(e) =>
+                        (e.currentTarget.style.backgroundColor = "#e3f2fd")
+                      }
+                      onMouseLeave={(e) =>
+                        (e.currentTarget.style.backgroundColor = "transparent")
+                      }
+                    >
+                      {cmd}
+                    </li>
                   ))}
                 </ul>
               </>
@@ -1305,52 +1340,10 @@ Tip: Hover over / Click an SQL category to reveal its commands and start practic
             )}
           </div>
         )}
-
-        {/* Commands Under Category */}
-        {selectedCategory === category && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-            {data.commands.length > 0 ? (
-              data.commands.map(cmd => (
-                <button
-                  key={cmd}
-                  onClick={() => {
-                    loadCommand(cmd);
-                    setSelectedCategory(null);
-                  }}
-                  style={{
-                    padding: "6px 12px",
-                    borderRadius: 6,
-                    border: "1px solid #1976d2",
-                    backgroundColor:
-                      selectedCommand === cmd ? "#1976d2" : "#e3f2fd",
-                    color: selectedCommand === cmd ? "white" : "#1976d2",
-                    cursor: "pointer",
-                    width: "100%",
-                    textAlign: "center",
-                  }}
-                >
-                  {cmd}
-                </button>
-              ))
-            ) : (
-              <div
-                style={{
-                  padding: "6px 12px",
-                  borderRadius: 6,
-                  border: "1px dashed #1976d2",
-                  color: "#888",
-                  textAlign: "center",
-                  fontStyle: "italic",
-                }}
-              >
-                No commands yet
-              </div>
-            )}
-          </div>
-        )}
-
       </div>
     ))}
+
+
   </div>
 
   {/* ===== MAIN WORKSPACE ===== */}
@@ -1733,6 +1726,147 @@ Tip: Hover over / Click an SQL category to reveal its commands and start practic
       </button>
     </div>
 
+      {showHelp && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100%",
+            height: "100%",
+            backgroundColor: "rgba(0,0,0,0.6)",
+            zIndex: 1000,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            padding: 10,
+          }}
+        >
+          <div
+            style={{
+              background: "white",
+              padding: 24,
+              borderRadius: 12,
+              width: "100%",
+              maxWidth: 800,
+              position: "relative",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.2)",
+              maxHeight: "90vh",
+              overflowY: "auto",
+            }}
+          >
+            {/* Close Button */}
+            <button
+              onClick={() => setShowHelp(false)}
+              style={{
+                position: "absolute",
+                top: 10,
+                right: 10,
+                fontSize: 20,
+                border: "none",
+                background: "transparent",
+                cursor: "pointer",
+              }}
+            >
+              ✖
+            </button>
+
+            <h2>SQLTutor – Participant Guide</h2>
+
+            {/* Tabs */}
+            <div style={{ display: "flex", gap: 10, marginBottom: 20 }}>
+              {["HOW", "CONCEPTS", "INTERFACE"].map((section) => {
+                const labels: Record<string, string> = {
+                  HOW: "🎓 How It Works",
+                  CONCEPTS: "📚 SQL Concepts",
+                  INTERFACE: "⚙ Interface Guide",
+                };
+
+                return (
+                  <button
+                    key={section}
+                    onClick={() => setHelpSection(section as "HOW" | "CONCEPTS" | "INTERFACE")}
+                    style={{
+                      padding: "8px 16px",
+                      borderRadius: 8,
+                      border: "none",
+                      cursor: "pointer",
+                      fontWeight: helpSection === section ? "bold" : "normal",
+                      backgroundColor: helpSection === section ? "#1976d2" : "#4a6fa5",
+                      color: "white",
+                      boxShadow: helpSection === section ? "0 4px 8px rgba(0,0,0,0.2)" : "none",
+                      transition: "background-color 0.2s, transform 0.1s",
+                    }}
+                    onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = "#1565c0")}
+                    onMouseLeave={(e) =>
+                      (e.currentTarget.style.backgroundColor =
+                        helpSection === section ? "#1976d2" : "#4a6fa5")
+                    }
+                  >
+                    {labels[section]}
+                  </button>
+                );
+              })}
+            </div>
+
+            {/* CONTENT SWITCH */}
+            {helpSection === "HOW" && (
+              <div>
+                <h3>🎓 How It Works</h3>
+                <p>
+                  This prototype is designed to observe how learners interact with SQL
+                  commands in a live environment.
+                </p>
+                <ul>
+                  <li>Select a category (DDL, DML, DQL).</li>
+                  <li>Choose a command template.</li>
+                  <li>Edit and run the query.</li>
+                  <li>Observe schema changes and execution steps.</li>
+                  <li>Use feedback messages to refine your query.</li>
+                </ul>
+                <p>
+                  There are no fixed tasks — explore freely. Your interaction data is
+                  logged anonymously for research purposes.
+                </p>
+              </div>
+            )}
+
+            {helpSection === "CONCEPTS" && (
+              <div>
+                <h3>📚 SQL Concepts</h3>
+                <ul>
+                  <li><strong>DDL</strong> – Defines structure (CREATE, ALTER, DROP).</li>
+                  <li><strong>DML</strong> – Modifies data (INSERT, UPDATE, DELETE).</li>
+                  <li><strong>DQL</strong> – Retrieves data (SELECT).</li>
+                  <li>WHERE filters rows.</li>
+                  <li>GROUP BY aggregates data.</li>
+                  <li>JOIN combines tables.</li>
+                </ul>
+                <p>
+                  Observe how commands affect both data and database schema visually.
+                </p>
+              </div>
+            )}
+
+            {helpSection === "INTERFACE" && (
+              <div>
+                <h3>⚙ Interface Guide</h3>
+                <ul>
+                  <li>Left panel: SQL Editor and execution feedback.</li>
+                  <li>Right panel: Database schema visualization.</li>
+                  <li>Highlighted tables indicate active queries.</li>
+                  <li>Execution steps show internal processing order.</li>
+                  <li>Results table shows query output.</li>
+                </ul>
+                <p>
+                  Please avoid refreshing the page during your session.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
     {/* ===== Survey Modal ===== */}
     {showSurvey && (
       <div
@@ -1803,6 +1937,7 @@ Tip: Hover over / Click an SQL category to reveal its commands and start practic
         </div>
       </div>
     )}
+
       
     </div>
   
