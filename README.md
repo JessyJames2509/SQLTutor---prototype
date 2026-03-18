@@ -66,14 +66,21 @@ By providing **real-time debugging hints** and **step-by-step query visualizatio
 
 ## Quickstart / Usage
 
-1. Select an exercise from the buttons at the top.  
-2. Write your SQL query in the editor.  
-3. Run the query using the **"Run Query"** button.  
-4. Observe:  
+1. Explore the Help button for guidance:
+
+   - How It Works – step-by-step instructions
+
+   - SQL Concepts – explanations of DDL, DML, DQL, and clauses
+
+   - Interface Guide – overview of panels, tables, and execution animations
+2. Select category command from the tootlips.  
+3. Write your SQL query in the editor.  
+4. Run the query using the **"Run Query"** button.  
+5. Observe:  
    - Syntax errors (orange warnings)  
    - Semantic hints (blue feedback)  
    - Query execution steps (highlighted schema & step animation)  
-5. Provide feedback via the **"Give Feedback"** button.  
+6. Provide feedback via the **"Give Feedback"** button.  
 
 ---
 
@@ -117,9 +124,9 @@ Submit feedback via [GitHub Issues](https://github.com/JessyJames2509/SQLTutor--
 
 ## Screenshots
 
-![Schema Visualization](docs/schema.png)  
-![Execution Animation](docs/execution.gif)  
-![Hints Example](docs/hints.png)
+![Schema Visualization](docs/schema-new.png)  
+![Execution Animation](docs/execution-new.gif)  
+![Hints Example](docs/hints-new.png)
 
 ---
 
