@@ -923,6 +923,9 @@ const runQuery = async () => {
     return;
   }
 
+  let runtimeError: string | null = null; 
+  let rowsAffected = 0;
+
   const { tables: affectedTables, columns: affectedColumns } =
     parseAffectedTablesAndColumns(query, command);
 
@@ -1060,6 +1063,7 @@ const runQuery = async () => {
       }
     }
 
+    
     // -----------------------
     // Execute query
     // -----------------------
@@ -1092,8 +1096,9 @@ const runQuery = async () => {
         }
       }
     } catch (e: any) {
+      runtimeError = e.message;  // <-- capture runtime error
+      setError(runtimeError);
       setRuntimeErrorCount(prev => prev + 1);
-      setError(e.message);
       executionLock.current = false;
       return;
     }
@@ -1101,7 +1106,7 @@ const runQuery = async () => {
     // -----------------------
     // Calculate rows affected for DML commands
     // -----------------------
-    let rowsAffected = 0;
+    
     if (["INSERT", "UPDATE", "DELETE"].includes(command) && affectedTables.length > 0) {
       try {
         const afterCountRes = db.exec(`SELECT COUNT(*) FROM ${affectedTables[0]};`);
@@ -1157,26 +1162,35 @@ const runQuery = async () => {
 
     setSuccessCount(prev => prev + 1);
 
-  } catch (e: any) {
-    setError(e.message);
+    } catch (e: any) {
+      runtimeError = e.message;         // capture for session log
+      setError(runtimeError);
+      setRuntimeErrorCount(prev => prev + 1);
+    } finally {
+      const endTime = Date.now();
 
-    setSessionLog(prev => [
-      ...prev,
-      {
-        timestamp: Date.now(),
+      const sessionEntry = {
+        timestamp: taskStartTime.current || sessionStart,
+        endTimestamp: endTime,
         query,
         command,
         syntaxErrors: syntaxErrs,
+        runtimeError, // use the variable
         feedback,
-        hints: generateHints(query, rows, [], schema, command),
-        rowsReturned: rows.length || 0
-      }
-    ]);
+        hints: syntaxHints.length > 0 ? syntaxHints : generateHints(query, rows, [], schema, command),
+        rowsReturned: rows.length || 0,
+        rowsData: command === "SELECT" ? rows : [],
+        rowsAffected: ["INSERT","UPDATE","DELETE"].includes(command) ? rowsAffected : 0,
+        affectedTables,
+        affectedColumns,
+        success: !runtimeError && syntaxErrs.length === 0
+      };
 
-  } finally {
-    executionLock.current = false;
-  }
-};
+      setSessionLog(prev => [...prev, sessionEntry]);
+
+      executionLock.current = false; // release lock
+    }
+    };
   /* =======================
      UI
   ======================= */
